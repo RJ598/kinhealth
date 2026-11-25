@@ -1,0 +1,6 @@
+{
+  "name": "KinHealth",
+  "description": "Couples health, calorie & protein tracker with AI meal photo recognition and body composition comparison.",
+  "requestFramePermissions": ["camera"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

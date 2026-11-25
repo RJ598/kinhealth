@@ -1,0 +1,459 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Global Safety Net (Default-Deny)
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // -------------------------------------------------------------------------
+    // Global Primitives
+    // -------------------------------------------------------------------------
+    function isSignedIn() {
+      return request.auth != null && request.auth.token.email_verified == true;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function isValidInviteCode(code) {
+      return code is string && code.size() >= 6 && code.size() <= 12 && code.matches('^[A-Z0-9]+$');
+    }
+
+    function isValidDateStr(d) {
+      return d is string && d.size() == 10 && d.matches('^\\d{4}-\\d{2}-\\d{2}$');
+    }
+
+    function isValidSharedUids(uids, ownerUid) {
+      return uids is list
+        && uids.size() >= 1
+        && uids.size() <= 10
+        && uids[0] is string
+        && isValidId(uids[0])
+        && ownerUid in uids;
+    }
+
+    function isHouseholdMember(householdId) {
+      return isSignedIn()
+        && exists(/databases/$(database)/documents/households/$(householdId))
+        && request.auth.uid in get(/databases/$(database)/documents/households/$(householdId)).data.memberIds;
+    }
+
+    function allSharedUidsInHousehold(uids, householdId) {
+      return uids.hasOnly(get(/databases/$(database)/documents/households/$(householdId)).data.memberIds);
+    }
+
+    // -------------------------------------------------------------------------
+    // Validation Blueprints
+    // -------------------------------------------------------------------------
+    function isValidUserProfile(data, userId) {
+      return data.keys().hasAll(['uid', 'email', 'displayName', 'householdId', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['uid', 'email', 'displayName', 'householdId', 'createdAt', 'updatedAt'])
+        && data.uid is string && data.uid == userId && isValidId(data.uid)
+        && data.email is string && data.email.size() >= 3 && data.email.size() <= 254
+        && data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 80
+        && data.householdId is string && data.householdId.size() <= 128 && data.householdId.matches('^[a-zA-Z0-9_\\-]*$')
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidFoodPreset(data, presetId, userId) {
+      return data.keys().hasAll([
+          'id', 'uid', 'name', 'mealType', 'servingNote',
+          'calories', 'proteinG', 'carbsG', 'fatG', 'fiberG',
+          'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'id', 'uid', 'name', 'mealType', 'servingNote',
+          'calories', 'proteinG', 'carbsG', 'fatG', 'fiberG',
+          'createdAt', 'updatedAt'
+        ])
+        && data.id is string && data.id == presetId && isValidId(data.id)
+        && data.uid is string && data.uid == userId && isValidId(data.uid)
+        && data.name is string && data.name.size() >= 1 && data.name.size() <= 120
+        && data.mealType in ['breakfast', 'lunch', 'dinner', 'snack']
+        && data.servingNote is string && data.servingNote.size() <= 120
+        && data.calories is number && data.calories >= 0 && data.calories <= 15000
+        && data.proteinG is number && data.proteinG >= 0 && data.proteinG <= 1000
+        && data.carbsG is number && data.carbsG >= 0 && data.carbsG <= 1500
+        && data.fatG is number && data.fatG >= 0 && data.fatG <= 1000
+        && data.fiberG is number && data.fiberG >= 0 && data.fiberG <= 500
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidHousehold(data, householdId) {
+      return data.keys().hasAll(['id', 'name', 'inviteCode', 'ownerId', 'memberIds', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['id', 'name', 'inviteCode', 'ownerId', 'memberIds', 'createdAt', 'updatedAt'])
+        && data.id is string && data.id == householdId && isValidId(data.id)
+        && data.name is string && data.name.size() >= 1 && data.name.size() <= 80
+        && isValidInviteCode(data.inviteCode)
+        && data.ownerId is string && isValidId(data.ownerId)
+        && data.memberIds is list && data.memberIds.size() >= 1 && data.memberIds.size() <= 10
+        && data.memberIds[0] is string && isValidId(data.memberIds[0])
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidHouseholdInvite(data, inviteCode) {
+      return data.keys().hasAll(['inviteCode', 'householdId', 'householdName', 'ownerId', 'createdAt'])
+        && data.keys().hasOnly(['inviteCode', 'householdId', 'householdName', 'ownerId', 'createdAt'])
+        && isValidInviteCode(data.inviteCode) && data.inviteCode == inviteCode
+        && data.householdId is string && isValidId(data.householdId)
+        && data.householdName is string && data.householdName.size() >= 1 && data.householdName.size() <= 80
+        && data.ownerId is string && isValidId(data.ownerId) && data.ownerId == request.auth.uid
+        && data.createdAt is timestamp;
+    }
+
+    function isValidMemberProfile(data, memberId) {
+      return data.keys().hasAll([
+          'uid', 'displayName', 'roleLabel', 'calorieTarget', 'proteinTargetG',
+          'carbsTargetG', 'fatTargetG', 'heightCm', 'targetWeightKg',
+          'targetMuscleMassKg', 'sharedUids', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'uid', 'displayName', 'roleLabel', 'calorieTarget', 'proteinTargetG',
+          'carbsTargetG', 'fatTargetG', 'heightCm', 'targetWeightKg',
+          'targetMuscleMassKg', 'sharedUids', 'updatedAt'
+        ])
+        && data.uid is string && data.uid == memberId && isValidId(data.uid)
+        && data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 60
+        && data.roleLabel is string && data.roleLabel.size() >= 1 && data.roleLabel.size() <= 30
+        && data.calorieTarget is number && data.calorieTarget >= 500 && data.calorieTarget <= 10000
+        && data.proteinTargetG is number && data.proteinTargetG >= 20 && data.proteinTargetG <= 600
+        && data.carbsTargetG is number && data.carbsTargetG >= 0 && data.carbsTargetG <= 1000
+        && data.fatTargetG is number && data.fatTargetG >= 0 && data.fatTargetG <= 500
+        && data.heightCm is number && data.heightCm >= 80 && data.heightCm <= 250
+        && data.targetWeightKg is number && data.targetWeightKg >= 25 && data.targetWeightKg <= 350
+        && data.targetMuscleMassKg is number && data.targetMuscleMassKg >= 10 && data.targetMuscleMassKg <= 150
+        && isValidSharedUids(data.sharedUids, data.uid)
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidFoodLog(data, logId) {
+      return data.keys().hasAll([
+          'id', 'uid', 'authorName', 'date', 'mealType', 'name', 'servingNote',
+          'calories', 'proteinG', 'carbsG', 'fatG', 'fiberG', 'source',
+          'aiConfidence', 'aiItemsSummary', 'sharedUids', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'id', 'uid', 'authorName', 'date', 'mealType', 'name', 'servingNote',
+          'calories', 'proteinG', 'carbsG', 'fatG', 'fiberG', 'source',
+          'aiConfidence', 'aiItemsSummary', 'sharedUids', 'createdAt', 'updatedAt'
+        ])
+        && data.id is string && data.id == logId && isValidId(data.id)
+        && data.uid is string && isValidId(data.uid)
+        && data.authorName is string && data.authorName.size() >= 1 && data.authorName.size() <= 60
+        && isValidDateStr(data.date)
+        && data.mealType in ['breakfast', 'lunch', 'dinner', 'snack']
+        && data.name is string && data.name.size() >= 1 && data.name.size() <= 120
+        && data.servingNote is string && data.servingNote.size() <= 120
+        && data.calories is number && data.calories >= 0 && data.calories <= 15000
+        && data.proteinG is number && data.proteinG >= 0 && data.proteinG <= 1000
+        && data.carbsG is number && data.carbsG >= 0 && data.carbsG <= 1500
+        && data.fatG is number && data.fatG >= 0 && data.fatG <= 1000
+        && data.fiberG is number && data.fiberG >= 0 && data.fiberG <= 500
+        && data.source in ['ai_photo', 'manual', 'preset']
+        && data.aiConfidence in ['', 'high', 'medium', 'low']
+        && data.aiItemsSummary is string && data.aiItemsSummary.size() <= 500
+        && isValidSharedUids(data.sharedUids, data.uid)
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidBodyLog(data, logId) {
+      return data.keys().hasAll([
+          'id', 'uid', 'authorName', 'date', 'weightKg', 'muscleMassKg',
+          'bodyFatPct', 'visceralFatIndex', 'waistCm', 'bmi', 'smi', 'ffmi',
+          'notes', 'sharedUids', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'id', 'uid', 'authorName', 'date', 'weightKg', 'muscleMassKg',
+          'bodyFatPct', 'visceralFatIndex', 'waistCm', 'bmi', 'smi', 'ffmi',
+          'notes', 'sharedUids', 'createdAt', 'updatedAt'
+        ])
+        && data.id is string && data.id == logId && isValidId(data.id)
+        && data.uid is string && isValidId(data.uid)
+        && data.authorName is string && data.authorName.size() >= 1 && data.authorName.size() <= 60
+        && isValidDateStr(data.date)
+        && data.weightKg is number && data.weightKg >= 20 && data.weightKg <= 400
+        && data.muscleMassKg is number && data.muscleMassKg >= 5 && data.muscleMassKg <= 200
+        && data.bodyFatPct is number && data.bodyFatPct >= 2 && data.bodyFatPct <= 75
+        && data.visceralFatIndex is number && data.visceralFatIndex >= 0 && data.visceralFatIndex <= 60
+        && data.waistCm is number && data.waistCm >= 0 && data.waistCm <= 250
+        && data.bmi is number && data.bmi >= 5 && data.bmi <= 100
+        && data.smi is number && data.smi >= 0 && data.smi <= 50
+        && data.ffmi is number && data.ffmi >= 0 && data.ffmi <= 50
+        && data.notes is string && data.notes.size() <= 240
+        && isValidSharedUids(data.sharedUids, data.uid)
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    // -------------------------------------------------------------------------
+    // Collection Rules
+    // -------------------------------------------------------------------------
+
+    // 1. Private User Profiles (Strict PII Isolation) & Personal Presets
+    match /users/{userId} {
+      allow get: if isValidId(userId) && isOwner(userId);
+      allow list: if false;
+      allow create: if isValidId(userId)
+        && isOwner(userId)
+        && isValidUserProfile(incoming(), userId)
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isValidId(userId)
+        && isOwner(userId)
+        && isValidUserProfile(incoming(), userId)
+        && incoming().uid == existing().uid
+        && incoming().email == existing().email
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'householdId', 'updatedAt']);
+      allow delete: if false;
+
+      // 1a. Personal Daily Food Presets (Owner-only)
+      match /foodPresets/{presetId} {
+        allow get: if isValidId(userId)
+          && isValidId(presetId)
+          && isOwner(userId)
+          && existing().uid == request.auth.uid;
+        allow list: if isOwner(userId)
+          && existing().uid == request.auth.uid;
+        allow create: if isValidId(userId)
+          && isValidId(presetId)
+          && isOwner(userId)
+          && isValidFoodPreset(incoming(), presetId, userId)
+          && incoming().createdAt == request.time
+          && incoming().updatedAt == request.time;
+        allow update: if isValidId(userId)
+          && isValidId(presetId)
+          && isOwner(userId)
+          && isValidFoodPreset(incoming(), presetId, userId)
+          && existing().uid == request.auth.uid
+          && incoming().id == existing().id
+          && incoming().uid == existing().uid
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedAt == request.time
+          && incoming().diff(existing()).affectedKeys().hasOnly([
+            'name', 'mealType', 'servingNote',
+            'calories', 'proteinG', 'carbsG', 'fatG', 'fiberG', 'updatedAt'
+          ]);
+        allow delete: if isValidId(userId)
+          && isValidId(presetId)
+          && isOwner(userId)
+          && existing().uid == request.auth.uid;
+      }
+    }
+
+    // 2. Household Invites (Direct Code Lookup Only)
+    match /householdInvites/{inviteCode} {
+      allow get: if isSignedIn() && isValidInviteCode(inviteCode);
+      allow list: if false;
+      allow create: if isSignedIn()
+        && isValidInviteCode(inviteCode)
+        && isValidHouseholdInvite(incoming(), inviteCode)
+        && incoming().createdAt == request.time
+        && existsAfter(/databases/$(database)/documents/households/$(incoming().householdId));
+      allow update: if false;
+      allow delete: if isSignedIn()
+        && isValidInviteCode(inviteCode)
+        && existing().ownerId == request.auth.uid;
+    }
+
+    // 3. Households & Subcollections
+    match /households/{householdId} {
+      allow get: if isSignedIn()
+        && isValidId(householdId)
+        && request.auth.uid in resource.data.memberIds;
+      allow list: if isSignedIn()
+        && request.auth.uid in resource.data.memberIds;
+      allow create: if isSignedIn()
+        && isValidId(householdId)
+        && isValidHousehold(incoming(), householdId)
+        && incoming().ownerId == request.auth.uid
+        && incoming().memberIds.size() == 1
+        && incoming().memberIds[0] == request.auth.uid
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time
+        && existsAfter(/databases/$(database)/documents/householdInvites/$(incoming().inviteCode));
+      allow update: if isSignedIn()
+        && isValidId(householdId)
+        && isValidHousehold(incoming(), householdId)
+        && incoming().id == existing().id
+        && incoming().ownerId == existing().ownerId
+        && incoming().inviteCode == existing().inviteCode
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && (
+          // Action: Owner renames household
+          (
+            existing().ownerId == request.auth.uid
+            && incoming().diff(existing()).affectedKeys().hasOnly(['name', 'updatedAt'])
+          )
+          ||
+          // Action: Member joins via valid invite (up to 10 members)
+          (
+            existing().memberIds.size() >= 1
+            && existing().memberIds.size() < 10
+            && !(request.auth.uid in existing().memberIds)
+            && incoming().memberIds.size() == existing().memberIds.size() + 1
+            && incoming().memberIds.hasAll(existing().memberIds)
+            && request.auth.uid in incoming().memberIds
+            && exists(/databases/$(database)/documents/householdInvites/$(existing().inviteCode))
+            && incoming().diff(existing()).affectedKeys().hasOnly(['memberIds', 'updatedAt'])
+          )
+          ||
+          // Action: Non-owner member leaves group
+          (
+            request.auth.uid in existing().memberIds
+            && request.auth.uid != existing().ownerId
+            && incoming().memberIds.size() == existing().memberIds.size() - 1
+            && existing().memberIds.hasAll(incoming().memberIds)
+            && !(request.auth.uid in incoming().memberIds)
+            && existing().ownerId in incoming().memberIds
+            && incoming().diff(existing()).affectedKeys().hasOnly(['memberIds', 'updatedAt'])
+          )
+        );
+      allow delete: if false;
+
+      // 3a. Member Profiles & Targets
+      match /members/{memberId} {
+        allow get: if isSignedIn()
+          && isValidId(householdId)
+          && isValidId(memberId)
+          && (request.auth.uid in resource.data.sharedUids || isHouseholdMember(householdId));
+        allow list: if isSignedIn()
+          && request.auth.uid in resource.data.sharedUids;
+        allow create: if isSignedIn()
+          && isValidId(householdId)
+          && isValidId(memberId)
+          && isOwner(memberId)
+          && isValidMemberProfile(incoming(), memberId)
+          && incoming().updatedAt == request.time
+          && isHouseholdMember(householdId)
+          && allSharedUidsInHousehold(incoming().sharedUids, householdId);
+        allow update: if isSignedIn()
+          && isValidId(householdId)
+          && isValidId(memberId)
+          && isOwner(memberId)
+          && isValidMemberProfile(incoming(), memberId)
+          && incoming().uid == existing().uid
+          && incoming().updatedAt == request.time
+          && isHouseholdMember(householdId)
+          && allSharedUidsInHousehold(incoming().sharedUids, householdId)
+          && (
+            // Action: Update targets, name, anthropometrics, or sync sharedUids
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'displayName', 'roleLabel', 'calorieTarget', 'proteinTargetG',
+              'carbsTargetG', 'fatTargetG', 'heightCm', 'targetWeightKg',
+              'targetMuscleMassKg', 'sharedUids', 'updatedAt'
+            ])
+          );
+        allow delete: if false;
+      }
+
+      // 3b. Food Logs
+      match /foodLogs/{logId} {
+        allow get: if isSignedIn()
+          && isValidId(householdId)
+          && isValidId(logId)
+          && (request.auth.uid in resource.data.sharedUids || isHouseholdMember(householdId));
+        allow list: if isSignedIn()
+          && request.auth.uid in resource.data.sharedUids;
+        allow create: if isSignedIn()
+          && isValidId(householdId)
+          && isValidId(logId)
+          && isValidFoodLog(incoming(), logId)
+          && incoming().uid == request.auth.uid
+          && incoming().createdAt == request.time
+          && incoming().updatedAt == request.time
+          && isHouseholdMember(householdId)
+          && allSharedUidsInHousehold(incoming().sharedUids, householdId);
+        allow update: if isSignedIn()
+          && isValidId(householdId)
+          && isValidId(logId)
+          && isValidFoodLog(incoming(), logId)
+          && existing().uid == request.auth.uid
+          && incoming().uid == existing().uid
+          && incoming().id == existing().id
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedAt == request.time
+          && isHouseholdMember(householdId)
+          && allSharedUidsInHousehold(incoming().sharedUids, householdId)
+          && (
+            // Action: Edit food log fields
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'authorName', 'date', 'mealType', 'name', 'servingNote',
+              'calories', 'proteinG', 'carbsG', 'fatG', 'fiberG',
+              'source', 'aiConfidence', 'aiItemsSummary', 'sharedUids', 'updatedAt'
+            ])
+          );
+        allow delete: if isSignedIn()
+          && isValidId(householdId)
+          && isValidId(logId)
+          && existing().uid == request.auth.uid
+          && isHouseholdMember(householdId);
+      }
+
+      // 3c. Body Composition Logs
+      match /bodyLogs/{logId} {
+        allow get: if isSignedIn()
+          && isValidId(householdId)
+          && isValidId(logId)
+          && (request.auth.uid in resource.data.sharedUids || isHouseholdMember(householdId));
+        allow list: if isSignedIn()
+          && request.auth.uid in resource.data.sharedUids;
+        allow create: if isSignedIn()
+          && isValidId(householdId)
+          && isValidId(logId)
+          && isValidBodyLog(incoming(), logId)
+          && incoming().uid == request.auth.uid
+          && incoming().createdAt == request.time
+          && incoming().updatedAt == request.time
+          && isHouseholdMember(householdId)
+          && allSharedUidsInHousehold(incoming().sharedUids, householdId);
+        allow update: if isSignedIn()
+          && isValidId(householdId)
+          && isValidId(logId)
+          && isValidBodyLog(incoming(), logId)
+          && existing().uid == request.auth.uid
+          && incoming().uid == existing().uid
+          && incoming().id == existing().id
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedAt == request.time
+          && isHouseholdMember(householdId)
+          && allSharedUidsInHousehold(incoming().sharedUids, householdId)
+          && (
+            // Action: Edit body log fields
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'authorName', 'date', 'weightKg', 'muscleMassKg', 'bodyFatPct',
+              'visceralFatIndex', 'waistCm', 'bmi', 'smi', 'ffmi',
+              'notes', 'sharedUids', 'updatedAt'
+            ])
+          );
+        allow delete: if isSignedIn()
+          && isValidId(householdId)
+          && isValidId(logId)
+          && existing().uid == request.auth.uid
+          && isHouseholdMember(householdId);
+      }
+    }
+  }
+}
