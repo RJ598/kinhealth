@@ -371,10 +371,26 @@ async function startServer() {
 
   if (process.env.NODE_ENV === 'production') {
     const distDir = path.resolve(process.cwd(), 'dist');
-    app.use(express.static(distDir));
+    app.use(
+      express.static(distDir, {
+        setHeaders: (res, filePath) => {
+          const base = path.basename(filePath);
+          if (
+            base === 'index.html' ||
+            base === 'sw.js' ||
+            base === 'registerSW.js' ||
+            base === 'manifest.webmanifest' ||
+            base.startsWith('workbox-')
+          ) {
+            res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+          }
+        },
+      })
+    );
     app.get('*', (_req: Request, res: Response) => {
       const indexFile = path.join(distDir, 'index.html');
       if (fs.existsSync(indexFile)) {
+        res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
         res.sendFile(indexFile);
       } else {
         res.status(404).send('Build output not found.');

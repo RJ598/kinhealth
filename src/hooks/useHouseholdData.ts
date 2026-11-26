@@ -88,6 +88,64 @@ function generateInviteCode(): string {
   return out;
 }
 
+const ALLOWED_MEAL_TYPES = new Set<FoodPreset['mealType']>([
+  'breakfast',
+  'lunch',
+  'dinner',
+  'snack',
+]);
+
+function sanitizeMealType(raw: unknown): FoodPreset['mealType'] {
+  if (typeof raw === 'string' && ALLOWED_MEAL_TYPES.has(raw as FoodPreset['mealType'])) {
+    return raw as FoodPreset['mealType'];
+  }
+  return 'lunch';
+}
+
+function buildGroupPresetFields(params: {
+  id: string;
+  uid: string;
+  authorName: string;
+  name: unknown;
+  mealType: unknown;
+  servingNote: unknown;
+  calories: unknown;
+  proteinG: unknown;
+  carbsG: unknown;
+  fatG: unknown;
+  fiberG: unknown;
+  sharedUids: string[];
+}) {
+  const safeAuthor =
+    params.authorName.trim().slice(0, BLUEPRINT_LIMITS.DISPLAY_NAME_MAX) || 'Member';
+  const safeName =
+    (typeof params.name === 'string' ? params.name : '')
+      .trim()
+      .slice(0, BLUEPRINT_LIMITS.FOOD_NAME_MAX) || 'Daily Meal';
+  const safeServingNote =
+    (typeof params.servingNote === 'string' ? params.servingNote : '')
+      .trim()
+      .slice(0, BLUEPRINT_LIMITS.SERVING_NOTE_MAX);
+  const safeSharedUids = Array.from(
+    new Set([params.uid, ...params.sharedUids].filter((id) => typeof id === 'string' && id.length > 0))
+  ).slice(0, 10);
+
+  return {
+    id: params.id,
+    uid: params.uid,
+    authorName: safeAuthor,
+    name: safeName,
+    mealType: sanitizeMealType(params.mealType),
+    servingNote: safeServingNote,
+    calories: clampNum(Math.round(Number(params.calories) || 0), 0, 15000),
+    proteinG: clampNum(Number((Number(params.proteinG) || 0).toFixed(1)), 0, 1000),
+    carbsG: clampNum(Number((Number(params.carbsG) || 0).toFixed(1)), 0, 1500),
+    fatG: clampNum(Number((Number(params.fatG) || 0).toFixed(1)), 0, 1000),
+    fiberG: clampNum(Number((Number(params.fiberG) || 0).toFixed(1)), 0, 500),
+    sharedUids: safeSharedUids,
+  };
+}
+
 export function useHouseholdData() {
   const [user, setUser] = useState<User | null>(null);
   const [authReady, setAuthReady] = useState(false);
@@ -308,11 +366,28 @@ export function useHouseholdData() {
     return () => unsub();
   }, [authReady, user, householdId]);
 
-  // 6c. One-time seamless migration of legacy personal presets into the active group
+  // 6c. Seamless migration of legacy personal presets into the active group
   useEffect(() => {
-    if (!authReady || !user || !household || household.memberIds.length === 0) return;
+    if (
+      !authReady ||
+      !user ||
+      !household ||
+      household.memberIds.length === 0 ||
+      !household.memberIds.includes(user.uid)
+    ) {
+      return;
+    }
 
     let cancelled = false;
+    const currentMember = members.find((m) => m.uid === user.uid);
+    const authorName =
+      (currentMember?.displayName || userProfile?.displayName || 'Member')
+        .trim()
+        .slice(0, BLUEPRINT_LIMITS.DISPLAY_NAME_MAX) || 'Member';
+    const sharedUids = Array.from(
+      new Set([user.uid, ...household.memberIds])
+    ).slice(0, 10);
+
     const migrateLegacyPresets = async () => {
       try {
         const legacyQuery = query(
@@ -322,37 +397,39 @@ export function useHouseholdData() {
         const snap = await getDocs(legacyQuery);
         if (cancelled || snap.empty) return;
 
-        const sharedUids = household.memberIds.slice(0, 10);
-        const authorName =
-          (userProfile?.displayName || 'Member')
-            .trim()
-            .slice(0, BLUEPRINT_LIMITS.DISPLAY_NAME_MAX) || 'Member';
-
-        const batch = writeBatch(db);
         for (const legacyDoc of snap.docs.slice(0, 100)) {
-          const data = legacyDoc.data() as FoodPreset;
-          const targetRef = doc(db, 'households', household.id, 'foodPresets', legacyDoc.id);
-          batch.set(targetRef, {
-            id: legacyDoc.id,
-            uid: user.uid,
-            authorName,
-            name: (data.name || 'Daily Meal').trim().slice(0, BLUEPRINT_LIMITS.FOOD_NAME_MAX),
-            mealType: data.mealType || 'lunch',
-            servingNote: (data.servingNote || '').trim().slice(0, BLUEPRINT_LIMITS.SERVING_NOTE_MAX),
-            calories: clampNum(Math.round(Number(data.calories) || 0), 0, 15000),
-            proteinG: clampNum(Number((Number(data.proteinG) || 0).toFixed(1)), 0, 1000),
-            carbsG: clampNum(Number((Number(data.carbsG) || 0).toFixed(1)), 0, 1500),
-            fatG: clampNum(Number((Number(data.fatG) || 0).toFixed(1)), 0, 1000),
-            fiberG: clampNum(Number((Number(data.fiberG) || 0).toFixed(1)), 0, 500),
-            sharedUids,
-            createdAt: serverTimestamp(),
-            updatedAt: serverTimestamp(),
-          });
-          batch.delete(legacyDoc.ref);
+          if (cancelled) return;
+          try {
+            const data = legacyDoc.data() as Partial<FoodPreset>;
+            const targetRef = doc(db, 'households', household.id, 'foodPresets', legacyDoc.id);
+            const existingTarget = await getDoc(targetRef);
+            if (!existingTarget.exists()) {
+              await setDoc(targetRef, {
+                ...buildGroupPresetFields({
+                  id: legacyDoc.id,
+                  uid: user.uid,
+                  authorName,
+                  name: data.name,
+                  mealType: data.mealType,
+                  servingNote: data.servingNote,
+                  calories: data.calories,
+                  proteinG: data.proteinG,
+                  carbsG: data.carbsG,
+                  fatG: data.fatG,
+                  fiberG: data.fiberG,
+                  sharedUids,
+                }),
+                createdAt: serverTimestamp(),
+                updatedAt: serverTimestamp(),
+              });
+            }
+            await deleteDoc(legacyDoc.ref);
+          } catch (docErr) {
+            console.error(`Legacy preset migration failed for ${legacyDoc.id}:`, docErr);
+          }
         }
-        await batch.commit();
       } catch (err) {
-        console.error('Legacy preset migration error:', err);
+        console.error('Legacy preset migration query error:', err);
       }
     };
 
@@ -360,12 +437,19 @@ export function useHouseholdData() {
     return () => {
       cancelled = true;
     };
-  }, [authReady, user, household, userProfile?.displayName]);
+  }, [authReady, user, household, members, userProfile?.displayName]);
 
   // 7. Auto-sync sharedUids on current user's docs when group membership changes
   useEffect(() => {
-    if (!user || !household || household.memberIds.length === 0) return;
-    const expected = [...household.memberIds].slice(0, 10);
+    if (
+      !user ||
+      !household ||
+      household.memberIds.length === 0 ||
+      !household.memberIds.includes(user.uid)
+    ) {
+      return;
+    }
+    const expected = Array.from(new Set(household.memberIds)).slice(0, 10);
     const hasMismatch = (arr: string[]) =>
       expected.some((id) => !arr.includes(id)) || arr.some((id) => !expected.includes(id));
 
@@ -379,7 +463,7 @@ export function useHouseholdData() {
       (b) => b.uid === user.uid && hasMismatch(b.sharedUids)
     );
     const myMember = members.find((m) => m.uid === user.uid);
-    const needsSyncMember = myMember && hasMismatch(myMember.sharedUids);
+    const needsSyncMember = Boolean(myMember && hasMismatch(myMember.sharedUids));
 
     if (
       !needsSyncMember &&
@@ -390,48 +474,84 @@ export function useHouseholdData() {
       return;
     }
 
-    const runSync = async () => {
+    const fallbackAuthor =
+      (myMember?.displayName || userProfile?.displayName || 'Member')
+        .trim()
+        .slice(0, BLUEPRINT_LIMITS.DISPLAY_NAME_MAX) || 'Member';
+
+    const syncDocsSafely = async (
+      updates: Array<{
+        ref: ReturnType<typeof doc>;
+        data: Record<string, unknown>;
+      }>
+    ) => {
+      if (updates.length === 0) return;
       try {
         const batch = writeBatch(db);
-        let ops = 0;
-        if (needsSyncMember) {
-          batch.update(doc(db, 'households', household.id, 'members', user.uid), {
-            sharedUids: expected,
-            updatedAt: serverTimestamp(),
-          });
-          ops += 1;
+        for (const u of updates) {
+          batch.update(u.ref, u.data);
         }
-        for (const item of needsSyncFood.slice(0, 120)) {
-          batch.update(doc(db, 'households', household.id, 'foodLogs', item.id), {
-            sharedUids: expected,
-            updatedAt: serverTimestamp(),
-          });
-          ops += 1;
+        await batch.commit();
+      } catch {
+        // Fallback per-doc so one legacy schema anomaly never blocks sibling docs
+        for (const u of updates) {
+          try {
+            await updateDoc(u.ref, u.data);
+          } catch (docErr) {
+            console.error('Background doc sync failed:', u.ref.path, docErr);
+          }
         }
-        for (const item of needsSyncPresets.slice(0, 120)) {
-          batch.update(doc(db, 'households', household.id, 'foodPresets', item.id), {
-            sharedUids: expected,
-            updatedAt: serverTimestamp(),
-          });
-          ops += 1;
-        }
-        for (const item of needsSyncBody.slice(0, 120)) {
-          batch.update(doc(db, 'households', household.id, 'bodyLogs', item.id), {
-            sharedUids: expected,
-            updatedAt: serverTimestamp(),
-          });
-          ops += 1;
-        }
-        if (ops > 0) {
-          await batch.commit();
-        }
-      } catch (err) {
-        console.error('Background group sync error:', err);
       }
     };
 
+    const runSync = async () => {
+      const presetUpdates = needsSyncPresets.slice(0, 120).map((item) => ({
+        ref: doc(db, 'households', household.id, 'foodPresets', item.id),
+        data: {
+          sharedUids: expected,
+          ...(item.authorName?.trim() ? {} : { authorName: fallbackAuthor }),
+          updatedAt: serverTimestamp(),
+        },
+      }));
+
+      const memberUpdates = needsSyncMember
+        ? [
+            {
+              ref: doc(db, 'households', household.id, 'members', user.uid),
+              data: {
+                sharedUids: expected,
+                updatedAt: serverTimestamp(),
+              },
+            },
+          ]
+        : [];
+
+      const foodUpdates = needsSyncFood.slice(0, 120).map((item) => ({
+        ref: doc(db, 'households', household.id, 'foodLogs', item.id),
+        data: {
+          sharedUids: expected,
+          updatedAt: serverTimestamp(),
+        },
+      }));
+
+      const bodyUpdates = needsSyncBody.slice(0, 120).map((item) => ({
+        ref: doc(db, 'households', household.id, 'bodyLogs', item.id),
+        data: {
+          sharedUids: expected,
+          updatedAt: serverTimestamp(),
+        },
+      }));
+
+      await Promise.all([
+        syncDocsSafely(presetUpdates),
+        syncDocsSafely(memberUpdates),
+        syncDocsSafely(foodUpdates),
+        syncDocsSafely(bodyUpdates),
+      ]);
+    };
+
     void runSync();
-  }, [user, household, members, foodLogs, foodPresets, bodyLogs]);
+  }, [user, household, members, foodLogs, foodPresets, bodyLogs, userProfile?.displayName]);
 
   const myProfile = useMemo(
     () => members.find((m) => m.uid === user?.uid) ?? null,
@@ -673,18 +793,20 @@ export function useHouseholdData() {
         }
         for (const p of migrateFoodPresets.filter((x) => x.uid === user.uid).slice(0, 100)) {
           batch.set(doc(db, 'households', targetHouseholdId, 'foodPresets', p.id), {
-            id: p.id,
-            uid: user.uid,
-            authorName: safeDisplayName,
-            name: p.name,
-            mealType: p.mealType,
-            servingNote: p.servingNote,
-            calories: p.calories,
-            proteinG: p.proteinG,
-            carbsG: p.carbsG,
-            fatG: p.fatG,
-            fiberG: p.fiberG,
-            sharedUids: fullMemberIds,
+            ...buildGroupPresetFields({
+              id: p.id,
+              uid: user.uid,
+              authorName: safeDisplayName,
+              name: p.name,
+              mealType: p.mealType,
+              servingNote: p.servingNote,
+              calories: p.calories,
+              proteinG: p.proteinG,
+              carbsG: p.carbsG,
+              fatG: p.fatG,
+              fiberG: p.fiberG,
+              sharedUids: fullMemberIds,
+            }),
             createdAt: serverTimestamp(),
             updatedAt: serverTimestamp(),
           });
@@ -916,28 +1038,29 @@ export function useHouseholdData() {
       if (!user || !household) return;
       const presetId = makeSafeId('preset');
       const path = `households/${household.id}/foodPresets/${presetId}`;
-      const sharedUids =
-        household.memberIds.length > 0 ? household.memberIds.slice(0, 10) : [user.uid];
+      const sharedUids = Array.from(
+        new Set([user.uid, ...household.memberIds])
+      ).slice(0, 10);
       const authorName =
         (myProfile?.displayName || userProfile?.displayName || 'Member')
           .trim()
           .slice(0, BLUEPRINT_LIMITS.DISPLAY_NAME_MAX) || 'Member';
       try {
         await setDoc(doc(db, 'households', household.id, 'foodPresets', presetId), {
-          id: presetId,
-          uid: user.uid,
-          authorName,
-          name: input.name.trim().slice(0, BLUEPRINT_LIMITS.FOOD_NAME_MAX) || 'Daily Meal',
-          mealType: input.mealType,
-          servingNote: input.servingNote
-            .trim()
-            .slice(0, BLUEPRINT_LIMITS.SERVING_NOTE_MAX),
-          calories: clampNum(Math.round(input.calories), 0, 15000),
-          proteinG: clampNum(Number(input.proteinG.toFixed(1)), 0, 1000),
-          carbsG: clampNum(Number(input.carbsG.toFixed(1)), 0, 1500),
-          fatG: clampNum(Number(input.fatG.toFixed(1)), 0, 1000),
-          fiberG: clampNum(Number(input.fiberG.toFixed(1)), 0, 500),
-          sharedUids,
+          ...buildGroupPresetFields({
+            id: presetId,
+            uid: user.uid,
+            authorName,
+            name: input.name,
+            mealType: input.mealType,
+            servingNote: input.servingNote,
+            calories: input.calories,
+            proteinG: input.proteinG,
+            carbsG: input.carbsG,
+            fatG: input.fatG,
+            fiberG: input.fiberG,
+            sharedUids,
+          }),
           createdAt: serverTimestamp(),
           updatedAt: serverTimestamp(),
         });
