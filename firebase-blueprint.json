@@ -181,7 +181,7 @@
         },
         "sharedUids": {
           "type": "array",
-          "description": "Bounded array of 1 to 2 household member UIDs."
+          "description": "Bounded array of 1 to 10 household member UIDs."
         },
         "updatedAt": {
           "type": "string",

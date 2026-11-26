@@ -512,7 +512,7 @@ export function useHouseholdData() {
         const msg = err instanceof Error ? err.message : String(err);
         if (msg.includes('permission') || msg.includes('PERMISSION_DENIED')) {
           setActionError(
-            'Unable to join this group — it may have reached the 10-member limit.'
+            'Unable to join this group — it may have reached the 10-member limit or you already belong to it.'
           );
           return;
         }
@@ -731,9 +731,10 @@ export function useHouseholdData() {
       const path = `households/${household.id}/foodLogs/${logId}`;
       const sharedUids =
         household.memberIds.length > 0 ? household.memberIds.slice(0, 10) : [user.uid];
-      const authorName = (myProfile?.displayName || userProfile?.displayName || 'Member')
-        .trim()
-        .slice(0, BLUEPRINT_LIMITS.DISPLAY_NAME_MAX);
+      const authorName =
+        (myProfile?.displayName || userProfile?.displayName || 'Member')
+          .trim()
+          .slice(0, BLUEPRINT_LIMITS.DISPLAY_NAME_MAX) || 'Member';
 
       try {
         await setDoc(doc(db, 'households', household.id, 'foodLogs', logId), {
@@ -773,9 +774,10 @@ export function useHouseholdData() {
       const path = `households/${household.id}/foodLogs/${logId}`;
       const sharedUids =
         household.memberIds.length > 0 ? household.memberIds.slice(0, 10) : [user.uid];
-      const authorName = (myProfile?.displayName || userProfile?.displayName || 'Member')
-        .trim()
-        .slice(0, BLUEPRINT_LIMITS.DISPLAY_NAME_MAX);
+      const authorName =
+        (myProfile?.displayName || userProfile?.displayName || 'Member')
+          .trim()
+          .slice(0, BLUEPRINT_LIMITS.DISPLAY_NAME_MAX) || 'Member';
 
       try {
         await updateDoc(doc(db, 'households', household.id, 'foodLogs', logId), {
@@ -893,9 +895,10 @@ export function useHouseholdData() {
       const path = `households/${household.id}/bodyLogs/${logId}`;
       const sharedUids =
         household.memberIds.length > 0 ? household.memberIds.slice(0, 10) : [user.uid];
-      const authorName = (myProfile?.displayName || userProfile?.displayName || 'Member')
-        .trim()
-        .slice(0, BLUEPRINT_LIMITS.DISPLAY_NAME_MAX);
+      const authorName =
+        (myProfile?.displayName || userProfile?.displayName || 'Member')
+          .trim()
+          .slice(0, BLUEPRINT_LIMITS.DISPLAY_NAME_MAX) || 'Member';
       const heightCm = myProfile?.heightCm || 172;
       const indexes = computeBodyIndexesFromBmi(
         input.bmi,
@@ -946,12 +949,14 @@ export function useHouseholdData() {
   const leaveHousehold = useCallback(async () => {
     if (!user || !household || household.ownerId === user.uid) return;
     try {
-      await updateDoc(doc(db, 'households', household.id), {
-        memberIds: arrayRemove(user.uid),
-        updatedAt: serverTimestamp(),
-      });
+      // Clear userProfile.householdId first so active workspace listeners detach cleanly
+      // before removing membership from the household document.
       await updateDoc(doc(db, 'users', user.uid), {
         householdId: '',
+        updatedAt: serverTimestamp(),
+      });
+      await updateDoc(doc(db, 'households', household.id), {
+        memberIds: arrayRemove(user.uid),
         updatedAt: serverTimestamp(),
       });
     } catch (err) {

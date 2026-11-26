@@ -48,9 +48,22 @@ export const AuthGate: React.FC<AuthGateProps> = ({
     try {
       await signInWithGoogle();
     } catch (err) {
-      setAuthError(
-        err instanceof Error ? err.message : 'Could not sign in with Google.'
-      );
+      const msg = err instanceof Error ? err.message : 'Could not sign in with Google.';
+      if (msg.includes('auth/unauthorized-domain')) {
+        const host = window.location.hostname;
+        const isIp = /^\d{1,3}(\.\d{1,3}){3}$/.test(host);
+        setAuthError(
+          isIp
+            ? `Domain not authorized for Google Sign-In (${host}). Access the app via a domain name over HTTPS (or localhost) and add that domain in Firebase Console → Authentication → Settings → Authorized domains.`
+            : `This domain (${host}) is not authorized for Google Sign-In yet. Add "${host}" in Firebase Console → Authentication → Settings → Authorized domains.`
+        );
+      } else if (msg.includes('auth/popup-blocked')) {
+        setAuthError(
+          'Sign-in popup was blocked by the browser. Please allow popups for this site and try again.'
+        );
+      } else {
+        setAuthError(msg);
+      }
     } finally {
       setAuthPending(false);
     }
