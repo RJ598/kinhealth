@@ -374,6 +374,86 @@
         "updatedAt"
       ]
     },
+    "GroupFoodPreset": {
+      "title": "GroupFoodPreset",
+      "description": "Shared group daily food preset with saved calories and macros for one-tap logging by any group member.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "authorName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 60
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "mealType": {
+          "type": "string",
+          "enum": ["breakfast", "lunch", "dinner", "snack"]
+        },
+        "servingNote": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "calories": {
+          "type": "number"
+        },
+        "proteinG": {
+          "type": "number"
+        },
+        "carbsG": {
+          "type": "number"
+        },
+        "fatG": {
+          "type": "number"
+        },
+        "fiberG": {
+          "type": "number"
+        },
+        "sharedUids": {
+          "type": "array",
+          "description": "Bounded array of 1 to 10 group member UIDs."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "id",
+        "uid",
+        "authorName",
+        "name",
+        "mealType",
+        "servingNote",
+        "calories",
+        "proteinG",
+        "carbsG",
+        "fatG",
+        "fiberG",
+        "sharedUids",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
     "BodyLog": {
       "title": "BodyLog",
       "description": "Body composition check-in recording weight, skeletal muscle mass, body fat percentage, and computed indexes.",
@@ -470,7 +550,7 @@
     },
     "/users/{userId}/foodPresets/{presetId}": {
       "schema": { "$ref": "#/entities/FoodPreset" },
-      "description": "Personal saved daily food presets for one-tap meal logging."
+      "description": "Legacy personal saved daily food presets (migrated automatically into active group presets)."
     },
     "/households/{householdId}": {
       "schema": { "$ref": "#/entities/Household" },
@@ -487,6 +567,10 @@
     "/households/{householdId}/foodLogs/{logId}": {
       "schema": { "$ref": "#/entities/FoodLog" },
       "description": "Food intake logs belonging to members of the workspace."
+    },
+    "/households/{householdId}/foodPresets/{presetId}": {
+      "schema": { "$ref": "#/entities/GroupFoodPreset" },
+      "description": "Shared daily food presets accessible to all members of the group."
     },
     "/households/{householdId}/bodyLogs/{logId}": {
       "schema": { "$ref": "#/entities/BodyLog" },

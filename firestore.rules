@@ -97,6 +97,33 @@ service cloud.firestore {
         && data.updatedAt is timestamp;
     }
 
+    function isValidGroupFoodPreset(data, presetId) {
+      return data.keys().hasAll([
+          'id', 'uid', 'authorName', 'name', 'mealType', 'servingNote',
+          'calories', 'proteinG', 'carbsG', 'fatG', 'fiberG', 'sharedUids',
+          'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'id', 'uid', 'authorName', 'name', 'mealType', 'servingNote',
+          'calories', 'proteinG', 'carbsG', 'fatG', 'fiberG', 'sharedUids',
+          'createdAt', 'updatedAt'
+        ])
+        && data.id is string && data.id == presetId && isValidId(data.id)
+        && data.uid is string && isValidId(data.uid)
+        && data.authorName is string && data.authorName.size() >= 1 && data.authorName.size() <= 60
+        && data.name is string && data.name.size() >= 1 && data.name.size() <= 120
+        && data.mealType in ['breakfast', 'lunch', 'dinner', 'snack']
+        && data.servingNote is string && data.servingNote.size() <= 120
+        && data.calories is number && data.calories >= 0 && data.calories <= 15000
+        && data.proteinG is number && data.proteinG >= 0 && data.proteinG <= 1000
+        && data.carbsG is number && data.carbsG >= 0 && data.carbsG <= 1500
+        && data.fatG is number && data.fatG >= 0 && data.fatG <= 1000
+        && data.fiberG is number && data.fiberG >= 0 && data.fiberG <= 500
+        && isValidSharedUids(data.sharedUids, data.uid)
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
     function isValidHousehold(data, householdId) {
       return data.keys().hasAll(['id', 'name', 'inviteCode', 'ownerId', 'memberIds', 'createdAt', 'updatedAt'])
         && data.keys().hasOnly(['id', 'name', 'inviteCode', 'ownerId', 'memberIds', 'createdAt', 'updatedAt'])
@@ -209,7 +236,7 @@ service cloud.firestore {
     // Collection Rules
     // -------------------------------------------------------------------------
 
-    // 1. Private User Profiles (Strict PII Isolation) & Personal Presets
+    // 1. Private User Profiles (Strict PII Isolation) & Legacy Personal Presets
     match /users/{userId} {
       allow get: if isValidId(userId) && isOwner(userId);
       allow list: if false;
@@ -228,7 +255,7 @@ service cloud.firestore {
         && incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'householdId', 'updatedAt']);
       allow delete: if false;
 
-      // 1a. Personal Daily Food Presets (Owner-only)
+      // 1a. Legacy Personal Daily Food Presets (Owner-only)
       match /foodPresets/{presetId} {
         allow get: if isValidId(userId)
           && isValidId(presetId)
@@ -412,7 +439,50 @@ service cloud.firestore {
           && isHouseholdMember(householdId);
       }
 
-      // 3c. Body Composition Logs
+      // 3c. Shared Group Food Presets
+      match /foodPresets/{presetId} {
+        allow get: if isSignedIn()
+          && isValidId(householdId)
+          && isValidId(presetId)
+          && (request.auth.uid in resource.data.sharedUids || isHouseholdMember(householdId));
+        allow list: if isSignedIn()
+          && request.auth.uid in resource.data.sharedUids;
+        allow create: if isSignedIn()
+          && isValidId(householdId)
+          && isValidId(presetId)
+          && isValidGroupFoodPreset(incoming(), presetId)
+          && incoming().uid == request.auth.uid
+          && incoming().createdAt == request.time
+          && incoming().updatedAt == request.time
+          && isHouseholdMember(householdId)
+          && allSharedUidsInHousehold(incoming().sharedUids, householdId);
+        allow update: if isSignedIn()
+          && isValidId(householdId)
+          && isValidId(presetId)
+          && isValidGroupFoodPreset(incoming(), presetId)
+          && existing().uid == request.auth.uid
+          && incoming().uid == existing().uid
+          && incoming().id == existing().id
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedAt == request.time
+          && isHouseholdMember(householdId)
+          && allSharedUidsInHousehold(incoming().sharedUids, householdId)
+          && (
+            // Action: Update preset fields or sync sharedUids
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'authorName', 'name', 'mealType', 'servingNote',
+              'calories', 'proteinG', 'carbsG', 'fatG', 'fiberG',
+              'sharedUids', 'updatedAt'
+            ])
+          );
+        allow delete: if isSignedIn()
+          && isValidId(householdId)
+          && isValidId(presetId)
+          && existing().uid == request.auth.uid
+          && isHouseholdMember(householdId);
+      }
+
+      // 3d. Body Composition Logs
       match /bodyLogs/{logId} {
         allow get: if isSignedIn()
           && isValidId(householdId)

@@ -66,7 +66,7 @@ function parseGeminiError(err: unknown): {
       status: 429,
       code: 'QUOTA_EXCEEDED',
       message:
-        'Daily Gemini AI free-tier quota exceeded. Upgrade to a billing-enabled API key in Settings > Secrets for higher limits, or enter nutrition values manually / use Daily Presets.',
+        'Daily Gemini AI free-tier quota exceeded. Use a billing-enabled GEMINI_API_KEY (in Settings > Secrets or your server/Kubernetes secret) for higher limits, or enter nutrition values manually / use Daily Presets.',
     };
   }
 
@@ -80,7 +80,16 @@ function parseGeminiError(err: unknown): {
       status: statusProp === 403 ? 403 : 400,
       code: 'API_KEY_ERROR',
       message:
-        'Gemini API key was rejected or lacks permission. Please verify your key in Settings > Secrets.',
+        'Gemini API key was rejected or lacks permission. Verify your GEMINI_API_KEY value (and make sure the Generative Language API is enabled on its project).',
+    };
+  }
+
+  if (statusProp === 404 || raw.includes('NOT_FOUND')) {
+    return {
+      status: 404,
+      code: 'MODEL_NOT_FOUND',
+      message:
+        'Configured Gemini model was not found for your API key. Check your key permissions or model availability.',
     };
   }
 
@@ -92,10 +101,11 @@ function parseGeminiError(err: unknown): {
 }
 
 function getAiClient(): GoogleGenAI {
-  const apiKey = process.env.GEMINI_API_KEY;
+  const rawKey = process.env.GEMINI_API_KEY ?? '';
+  const apiKey = rawKey.trim().replace(/^['"]|['"]$/g, '');
   if (!apiKey || apiKey === 'MY_GEMINI_API_KEY') {
     throw new Error(
-      'GEMINI_API_KEY is not configured. Please add your Gemini API key in Settings > Secrets.'
+      'GEMINI_API_KEY is not configured. Set the GEMINI_API_KEY environment variable (or Kubernetes secret kinhealth-secrets) and restart the server.'
     );
   }
   return new GoogleGenAI({

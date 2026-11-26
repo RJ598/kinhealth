@@ -363,11 +363,13 @@ export const OverviewView: React.FC<OverviewViewProps> = ({
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
                 <h2 className="font-display text-sm font-semibold text-slate-900">
-                  Daily Food Presets
+                  {otherMembers.length > 0 ? 'Shared Group Presets' : 'Daily Food Presets'}
                 </h2>
                 <p className="text-xs text-slate-500">
                   {foodPresets.length > 0
-                    ? `One-click log recurring meals to ${formatReadableDate(selectedDate)}`
+                    ? otherMembers.length > 0
+                      ? `Shared with your group · one-click log to ${formatReadableDate(selectedDate)}`
+                      : `One-click log recurring meals to ${formatReadableDate(selectedDate)}`
                     : 'Save foods you eat every day for instant one-tap logging'}
                 </p>
               </div>
@@ -399,6 +401,12 @@ export const OverviewView: React.FC<OverviewViewProps> = ({
                         <div className="text-[11px] font-mono tabular-nums text-slate-500 truncate">
                           <span className="capitalize font-sans">{preset.mealType}</span> ·{' '}
                           {preset.calories} kcal · {preset.proteinG}g P
+                          {otherMembers.length > 0 && preset.authorName && (
+                            <span className="font-sans">
+                              {' '}
+                              · by {preset.uid === myProfile.uid ? 'You' : preset.authorName}
+                            </span>
+                          )}
                         </div>
                       </div>
                       <button

@@ -349,6 +349,8 @@ function MainApp() {
         initialMode={foodModalMode}
         editingLog={editingFoodLog}
         foodPresets={foodPresets}
+        currentUserUid={user.uid}
+        memberCount={members.length}
         onClose={() => {
           setFoodModalOpen(false);
           setEditingFoodLog(null);

@@ -8,6 +8,7 @@ import {
   deleteDoc,
   doc,
   getDoc,
+  getDocs,
   onSnapshot,
   query,
   serverTimestamp,
@@ -277,16 +278,16 @@ export function useHouseholdData() {
     return () => unsub();
   }, [authReady, user, householdId]);
 
-  // 6b. Listen to Personal Daily Food Presets (owner-only, portable across groups)
+  // 6b. Listen to Shared Group Daily Food Presets
   useEffect(() => {
-    if (!authReady || !user) {
+    if (!authReady || !user || !householdId) {
       setFoodPresets([]);
       return;
     }
-    const path = `users/${user.uid}/foodPresets`;
+    const path = `households/${householdId}/foodPresets`;
     const q = query(
-      collection(db, 'users', user.uid, 'foodPresets'),
-      where('uid', '==', user.uid)
+      collection(db, 'households', householdId, 'foodPresets'),
+      where('sharedUids', 'array-contains', user.uid)
     );
     const unsub = onSnapshot(
       q,
@@ -305,7 +306,61 @@ export function useHouseholdData() {
       }
     );
     return () => unsub();
-  }, [authReady, user]);
+  }, [authReady, user, householdId]);
+
+  // 6c. One-time seamless migration of legacy personal presets into the active group
+  useEffect(() => {
+    if (!authReady || !user || !household || household.memberIds.length === 0) return;
+
+    let cancelled = false;
+    const migrateLegacyPresets = async () => {
+      try {
+        const legacyQuery = query(
+          collection(db, 'users', user.uid, 'foodPresets'),
+          where('uid', '==', user.uid)
+        );
+        const snap = await getDocs(legacyQuery);
+        if (cancelled || snap.empty) return;
+
+        const sharedUids = household.memberIds.slice(0, 10);
+        const authorName =
+          (userProfile?.displayName || 'Member')
+            .trim()
+            .slice(0, BLUEPRINT_LIMITS.DISPLAY_NAME_MAX) || 'Member';
+
+        const batch = writeBatch(db);
+        for (const legacyDoc of snap.docs.slice(0, 100)) {
+          const data = legacyDoc.data() as FoodPreset;
+          const targetRef = doc(db, 'households', household.id, 'foodPresets', legacyDoc.id);
+          batch.set(targetRef, {
+            id: legacyDoc.id,
+            uid: user.uid,
+            authorName,
+            name: (data.name || 'Daily Meal').trim().slice(0, BLUEPRINT_LIMITS.FOOD_NAME_MAX),
+            mealType: data.mealType || 'lunch',
+            servingNote: (data.servingNote || '').trim().slice(0, BLUEPRINT_LIMITS.SERVING_NOTE_MAX),
+            calories: clampNum(Math.round(Number(data.calories) || 0), 0, 15000),
+            proteinG: clampNum(Number((Number(data.proteinG) || 0).toFixed(1)), 0, 1000),
+            carbsG: clampNum(Number((Number(data.carbsG) || 0).toFixed(1)), 0, 1500),
+            fatG: clampNum(Number((Number(data.fatG) || 0).toFixed(1)), 0, 1000),
+            fiberG: clampNum(Number((Number(data.fiberG) || 0).toFixed(1)), 0, 500),
+            sharedUids,
+            createdAt: serverTimestamp(),
+            updatedAt: serverTimestamp(),
+          });
+          batch.delete(legacyDoc.ref);
+        }
+        await batch.commit();
+      } catch (err) {
+        console.error('Legacy preset migration error:', err);
+      }
+    };
+
+    void migrateLegacyPresets();
+    return () => {
+      cancelled = true;
+    };
+  }, [authReady, user, household, userProfile?.displayName]);
 
   // 7. Auto-sync sharedUids on current user's docs when group membership changes
   useEffect(() => {
@@ -317,13 +372,21 @@ export function useHouseholdData() {
     const needsSyncFood = foodLogs.filter(
       (f) => f.uid === user.uid && hasMismatch(f.sharedUids)
     );
+    const needsSyncPresets = foodPresets.filter(
+      (p) => p.uid === user.uid && hasMismatch(p.sharedUids ?? [])
+    );
     const needsSyncBody = bodyLogs.filter(
       (b) => b.uid === user.uid && hasMismatch(b.sharedUids)
     );
     const myMember = members.find((m) => m.uid === user.uid);
     const needsSyncMember = myMember && hasMismatch(myMember.sharedUids);
 
-    if (!needsSyncMember && needsSyncFood.length === 0 && needsSyncBody.length === 0) {
+    if (
+      !needsSyncMember &&
+      needsSyncFood.length === 0 &&
+      needsSyncPresets.length === 0 &&
+      needsSyncBody.length === 0
+    ) {
       return;
     }
 
@@ -338,14 +401,21 @@ export function useHouseholdData() {
           });
           ops += 1;
         }
-        for (const item of needsSyncFood.slice(0, 150)) {
+        for (const item of needsSyncFood.slice(0, 120)) {
           batch.update(doc(db, 'households', household.id, 'foodLogs', item.id), {
             sharedUids: expected,
             updatedAt: serverTimestamp(),
           });
           ops += 1;
         }
-        for (const item of needsSyncBody.slice(0, 150)) {
+        for (const item of needsSyncPresets.slice(0, 120)) {
+          batch.update(doc(db, 'households', household.id, 'foodPresets', item.id), {
+            sharedUids: expected,
+            updatedAt: serverTimestamp(),
+          });
+          ops += 1;
+        }
+        for (const item of needsSyncBody.slice(0, 120)) {
           batch.update(doc(db, 'households', household.id, 'bodyLogs', item.id), {
             sharedUids: expected,
             updatedAt: serverTimestamp(),
@@ -361,7 +431,7 @@ export function useHouseholdData() {
     };
 
     void runSync();
-  }, [user, household, members, foodLogs, bodyLogs]);
+  }, [user, household, members, foodLogs, foodPresets, bodyLogs]);
 
   const myProfile = useMemo(
     () => members.find((m) => m.uid === user?.uid) ?? null,
@@ -463,7 +533,8 @@ export function useHouseholdData() {
       rawCode: string,
       setup: SetupMemberInput,
       migrateFoodLogs: FoodLog[] = [],
-      migrateBodyLogs: BodyLog[] = []
+      migrateBodyLogs: BodyLog[] = [],
+      migrateFoodPresets: FoodPreset[] = []
     ) => {
       if (!user) return;
       setActionError(null);
@@ -600,6 +671,24 @@ export function useHouseholdData() {
             updatedAt: serverTimestamp(),
           });
         }
+        for (const p of migrateFoodPresets.filter((x) => x.uid === user.uid).slice(0, 100)) {
+          batch.set(doc(db, 'households', targetHouseholdId, 'foodPresets', p.id), {
+            id: p.id,
+            uid: user.uid,
+            authorName: safeDisplayName,
+            name: p.name,
+            mealType: p.mealType,
+            servingNote: p.servingNote,
+            calories: p.calories,
+            proteinG: p.proteinG,
+            carbsG: p.carbsG,
+            fatG: p.fatG,
+            fiberG: p.fiberG,
+            sharedUids: fullMemberIds,
+            createdAt: serverTimestamp(),
+            updatedAt: serverTimestamp(),
+          });
+        }
         for (const b of migrateBodyLogs.filter((x) => x.uid === user.uid).slice(0, 100)) {
           batch.set(doc(db, 'households', targetHouseholdId, 'bodyLogs', b.id), {
             id: b.id,
@@ -650,10 +739,11 @@ export function useHouseholdData() {
           targetMuscleMassKg: myProfile.targetMuscleMassKg,
         },
         foodLogs,
-        bodyLogs
+        bodyLogs,
+        foodPresets
       );
     },
-    [myProfile, joinHouseholdByCode, foodLogs, bodyLogs]
+    [myProfile, joinHouseholdByCode, foodLogs, bodyLogs, foodPresets]
   );
 
   const updateMyTargets = useCallback(
@@ -823,13 +913,20 @@ export function useHouseholdData() {
 
   const addFoodPreset = useCallback(
     async (input: CreateFoodPresetInput) => {
-      if (!user) return;
+      if (!user || !household) return;
       const presetId = makeSafeId('preset');
-      const path = `users/${user.uid}/foodPresets/${presetId}`;
+      const path = `households/${household.id}/foodPresets/${presetId}`;
+      const sharedUids =
+        household.memberIds.length > 0 ? household.memberIds.slice(0, 10) : [user.uid];
+      const authorName =
+        (myProfile?.displayName || userProfile?.displayName || 'Member')
+          .trim()
+          .slice(0, BLUEPRINT_LIMITS.DISPLAY_NAME_MAX) || 'Member';
       try {
-        await setDoc(doc(db, 'users', user.uid, 'foodPresets', presetId), {
+        await setDoc(doc(db, 'households', household.id, 'foodPresets', presetId), {
           id: presetId,
           uid: user.uid,
+          authorName,
           name: input.name.trim().slice(0, BLUEPRINT_LIMITS.FOOD_NAME_MAX) || 'Daily Meal',
           mealType: input.mealType,
           servingNote: input.servingNote
@@ -840,6 +937,7 @@ export function useHouseholdData() {
           carbsG: clampNum(Number(input.carbsG.toFixed(1)), 0, 1500),
           fatG: clampNum(Number(input.fatG.toFixed(1)), 0, 1000),
           fiberG: clampNum(Number(input.fiberG.toFixed(1)), 0, 500),
+          sharedUids,
           createdAt: serverTimestamp(),
           updatedAt: serverTimestamp(),
         });
@@ -847,20 +945,20 @@ export function useHouseholdData() {
         handleFirestoreError(err, OperationType.CREATE, path);
       }
     },
-    [user]
+    [user, household, myProfile?.displayName, userProfile?.displayName]
   );
 
   const deleteFoodPreset = useCallback(
     async (presetId: string) => {
-      if (!user) return;
-      const path = `users/${user.uid}/foodPresets/${presetId}`;
+      if (!user || !household) return;
+      const path = `households/${household.id}/foodPresets/${presetId}`;
       try {
-        await deleteDoc(doc(db, 'users', user.uid, 'foodPresets', presetId));
+        await deleteDoc(doc(db, 'households', household.id, 'foodPresets', presetId));
       } catch (err) {
         handleFirestoreError(err, OperationType.DELETE, path);
       }
     },
-    [user]
+    [user, household]
   );
 
   const logFromPreset = useCallback(

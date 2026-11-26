@@ -26,6 +26,8 @@ interface AiFoodModalProps {
   initialMode?: 'ai' | 'manual' | 'presets';
   editingLog: FoodLog | null;
   foodPresets: FoodPreset[];
+  currentUserUid?: string;
+  memberCount?: number;
   onClose: () => void;
   onSave: (input: CreateFoodInput, editingId?: string) => Promise<void>;
   onCreatePreset: (input: CreateFoodPresetInput) => Promise<void>;
@@ -78,6 +80,8 @@ export const AiFoodModal: React.FC<AiFoodModalProps> = ({
   initialMode = 'ai',
   editingLog,
   foodPresets,
+  currentUserUid,
+  memberCount = 1,
   onClose,
   onSave,
   onCreatePreset,
@@ -663,6 +667,7 @@ export const AiFoodModal: React.FC<AiFoodModalProps> = ({
                     const scaledCal = Math.round(preset.calories * presetScale);
                     const scaledProt = Number((preset.proteinG * presetScale).toFixed(1));
                     const isLogging = loggingPresetId === preset.id;
+                    const isMine = !currentUserUid || preset.uid === currentUserUid;
                     return (
                       <div
                         key={preset.id}
@@ -676,6 +681,9 @@ export const AiFoodModal: React.FC<AiFoodModalProps> = ({
                             {preset.mealType}
                             {preset.servingNote ? ` · ${preset.servingNote}` : ''}
                             {presetScale !== 1 ? ` · ${presetScale}x` : ''}
+                            {memberCount > 1 && preset.authorName
+                              ? ` · by ${isMine ? 'You' : preset.authorName}`
+                              : ''}
                           </div>
                           <div className="mt-0.5 text-xs font-mono tabular-nums text-slate-600">
                             <span className="font-semibold text-slate-900">
@@ -706,14 +714,16 @@ export const AiFoodModal: React.FC<AiFoodModalProps> = ({
                             <Plus className="w-3.5 h-3.5" />
                             {isLogging ? 'Logging…' : 'Log'}
                           </button>
-                          <button
-                            type="button"
-                            onClick={() => void onDeletePreset(preset.id)}
-                            aria-label={`Delete preset ${preset.name}`}
-                            className="p-1.5 text-slate-400 hover:text-red-600 rounded hover:bg-red-50"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
+                          {isMine && (
+                            <button
+                              type="button"
+                              onClick={() => void onDeletePreset(preset.id)}
+                              aria-label={`Delete preset ${preset.name}`}
+                              className="p-1.5 text-slate-400 hover:text-red-600 rounded hover:bg-red-50"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          )}
                         </div>
                       </div>
                     );

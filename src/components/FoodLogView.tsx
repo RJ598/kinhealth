@@ -135,11 +135,12 @@ export const FoodLogView: React.FC<FoodLogViewProps> = ({
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div>
             <h3 className="font-display text-sm font-semibold text-slate-900">
-              Saved Daily Presets
+              {members.length > 1 ? 'Shared Group Presets' : 'Saved Daily Presets'}
             </h3>
             <p className="text-xs text-slate-500">
-              Tap Log to add a saved meal to {selectedDate}, or bookmark any row below to
-              reuse it daily
+              {members.length > 1
+                ? `Shared across all group members · tap Log to add to ${selectedDate}, or bookmark any row below`
+                : `Tap Log to add a saved meal to ${selectedDate}, or bookmark any row below to reuse it daily`}
             </p>
           </div>
           <button
@@ -161,6 +162,7 @@ export const FoodLogView: React.FC<FoodLogViewProps> = ({
             {foodPresets.map((preset) => {
               const isBusy = loggingPresetId === preset.id;
               const wasLogged = justLoggedPresetId === preset.id;
+              const isMine = preset.uid === myProfile.uid;
               return (
                 <div
                   key={preset.id}
@@ -173,6 +175,12 @@ export const FoodLogView: React.FC<FoodLogViewProps> = ({
                     <div className="text-[11px] font-mono tabular-nums text-slate-500 truncate">
                       <span className="capitalize font-sans">{preset.mealType}</span> ·{' '}
                       {preset.calories} kcal · {preset.proteinG}g P
+                      {members.length > 1 && preset.authorName && (
+                        <span className="font-sans">
+                          {' '}
+                          · by {isMine ? 'You' : preset.authorName}
+                        </span>
+                      )}
                     </div>
                   </div>
                   <div className="flex items-center gap-1 shrink-0">
@@ -198,14 +206,16 @@ export const FoodLogView: React.FC<FoodLogViewProps> = ({
                         </>
                       )}
                     </button>
-                    <button
-                      type="button"
-                      onClick={() => void onDeletePreset(preset.id)}
-                      aria-label={`Delete preset ${preset.name}`}
-                      className="p-1 text-slate-400 hover:text-red-600"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
+                    {isMine && (
+                      <button
+                        type="button"
+                        onClick={() => void onDeletePreset(preset.id)}
+                        aria-label={`Delete preset ${preset.name}`}
+                        className="p-1 text-slate-400 hover:text-red-600"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    )}
                   </div>
                 </div>
               );

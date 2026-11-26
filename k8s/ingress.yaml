@@ -1,0 +1,26 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: kinhealth
+  labels:
+    app: kinhealth
+  annotations:
+    # Allow up to 16MB request bodies for base64 meal photo uploads (/api/analyze-food uses 12MB limit)
+    nginx.ingress.kubernetes.io/proxy-body-size: "16m"
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - kinhealth.example.com
+      secretName: kinhealth-tls
+  rules:
+    - host: kinhealth.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: kinhealth
+                port:
+                  number: 80

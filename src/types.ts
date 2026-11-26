@@ -85,6 +85,7 @@ export interface FoodLog {
 export interface FoodPreset {
   id: string;
   uid: string;
+  authorName?: string;
   name: string;
   mealType: MealType;
   servingNote: string;
@@ -93,6 +94,7 @@ export interface FoodPreset {
   carbsG: number;
   fatG: number;
   fiberG: number;
+  sharedUids?: string[];
   createdAt?: Timestamp;
   updatedAt?: Timestamp;
 }
