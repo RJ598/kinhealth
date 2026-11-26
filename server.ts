@@ -371,15 +371,33 @@ async function startServer() {
       }
     });
   } else {
+    const hmrDisabled = process.env.DISABLE_HMR === 'true';
     const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
       server: {
         middlewareMode: true,
-        hmr:
-          process.env.DISABLE_HMR === 'true'
-            ? false
-            : { server: httpServer },
+        hmr: hmrDisabled ? false : { server: httpServer },
+        ws: hmrDisabled ? false : undefined,
       },
+      plugins: hmrDisabled
+        ? [
+            {
+              name: 'disable-hmr-client-socket',
+              transform(code: string, id: string) {
+                const cleanId = id.split('?')[0].replace(/\\/g, '/');
+                if (cleanId.endsWith('/vite/dist/client/client.mjs')) {
+                  return {
+                    code: code.replace(
+                      /let wsTransport = createWebSocketModuleRunnerTransport\(\{\s*createConnection:[\s\S]*?pingInterval:[^\n]*\n\s*\}\);/,
+                      'let wsTransport = { async connect() {}, async disconnect() {}, send() {} };'
+                    ),
+                    map: null,
+                  };
+                }
+              },
+            },
+          ]
+        : [],
       appType: 'spa',
     });
     app.use(vite.middlewares);
