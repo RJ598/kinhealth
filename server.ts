@@ -16,6 +16,9 @@ interface CacheEntry {
 const AUTOCOMPLETE_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 const autocompleteCache = new Map<string, CacheEntry>();
 
+const WEEKLY_INSIGHTS_CACHE_TTL_MS = 30 * 60 * 1000;
+const weeklyInsightsCache = new Map<string, CacheEntry>();
+
 function getCachedAutocomplete(key: string): unknown | null {
   const entry = autocompleteCache.get(key);
   if (!entry) return null;
@@ -34,6 +37,27 @@ function setCachedAutocomplete(key: string, data: unknown) {
   autocompleteCache.set(key, {
     data,
     expiresAt: Date.now() + AUTOCOMPLETE_CACHE_TTL_MS,
+  });
+}
+
+function getCachedWeeklyInsights(key: string): unknown | null {
+  const entry = weeklyInsightsCache.get(key);
+  if (!entry) return null;
+  if (Date.now() > entry.expiresAt) {
+    weeklyInsightsCache.delete(key);
+    return null;
+  }
+  return entry.data;
+}
+
+function setCachedWeeklyInsights(key: string, data: unknown) {
+  if (weeklyInsightsCache.size >= 100) {
+    const oldestKey = weeklyInsightsCache.keys().next().value;
+    if (oldestKey) weeklyInsightsCache.delete(oldestKey);
+  }
+  weeklyInsightsCache.set(key, {
+    data,
+    expiresAt: Date.now() + WEEKLY_INSIGHTS_CACHE_TTL_MS,
   });
 }
 
@@ -128,12 +152,183 @@ interface AutocompleteMealBody {
   query?: string;
 }
 
+interface WeeklyInsightsDayInput {
+  date?: string;
+  calories?: number;
+  proteinG?: number;
+  carbsG?: number;
+  fatG?: number;
+  fiberG?: number;
+  mealCount?: number;
+  topMeals?: string[];
+}
+
+interface WeeklyInsightsBody {
+  startDate?: string;
+  endDate?: string;
+  forceRefresh?: boolean;
+  targets?: {
+    calorieTarget?: number;
+    proteinTargetG?: number;
+    carbsTargetG?: number;
+    fatTargetG?: number;
+  };
+  dailyBreakdown?: WeeklyInsightsDayInput[];
+}
+
 async function startServer() {
   const app = express();
   app.use(express.json({ limit: '12mb' }));
 
   app.get('/api/health', (_req: Request, res: Response) => {
     res.json({ ok: true });
+  });
+
+  app.post('/api/weekly-insights', async (req: Request, res: Response) => {
+    try {
+      const body = req.body as WeeklyInsightsBody;
+      const startDate = String(body.startDate ?? '').trim().slice(0, 20);
+      const endDate = String(body.endDate ?? '').trim().slice(0, 20);
+      const forceRefresh = Boolean(body.forceRefresh);
+
+      if (!startDate || !endDate || !Array.isArray(body.dailyBreakdown)) {
+        res.status(400).json({ error: 'Invalid weekly summary payload.' });
+        return;
+      }
+
+      const targets = {
+        calorieTarget: Math.max(500, Math.min(10000, Number(body.targets?.calorieTarget) || 2000)),
+        proteinTargetG: Math.max(20, Math.min(600, Number(body.targets?.proteinTargetG) || 140)),
+        carbsTargetG: Math.max(10, Math.min(1000, Number(body.targets?.carbsTargetG) || 200)),
+        fatTargetG: Math.max(10, Math.min(500, Number(body.targets?.fatTargetG) || 65)),
+      };
+
+      const sanitizedDays = body.dailyBreakdown.slice(0, 7).map((day) => ({
+        date: String(day.date ?? '').trim().slice(0, 20),
+        calories: Math.max(0, Math.round(Number(day.calories) || 0)),
+        proteinG: Math.max(0, Math.round((Number(day.proteinG) || 0) * 10) / 10),
+        carbsG: Math.max(0, Math.round((Number(day.carbsG) || 0) * 10) / 10),
+        fatG: Math.max(0, Math.round((Number(day.fatG) || 0) * 10) / 10),
+        fiberG: Math.max(0, Math.round((Number(day.fiberG) || 0) * 10) / 10),
+        mealCount: Math.max(0, Math.min(50, Math.round(Number(day.mealCount) || 0))),
+        topMeals: Array.isArray(day.topMeals)
+          ? day.topMeals
+              .slice(0, 5)
+              .map((m) => String(m ?? '').trim().slice(0, 80))
+              .filter(Boolean)
+          : [],
+      }));
+
+      const loggedDays = sanitizedDays.filter((d) => d.mealCount > 0);
+      if (loggedDays.length === 0) {
+        res.status(400).json({ error: 'Log at least one meal in this 7-day window to generate insights.' });
+        return;
+      }
+
+      const avgCalories = Math.round(
+        loggedDays.reduce((sum, d) => sum + d.calories, 0) / loggedDays.length
+      );
+      const avgProteinG =
+        Math.round((loggedDays.reduce((sum, d) => sum + d.proteinG, 0) / loggedDays.length) * 10) / 10;
+      const avgCarbsG =
+        Math.round((loggedDays.reduce((sum, d) => sum + d.carbsG, 0) / loggedDays.length) * 10) / 10;
+      const avgFatG =
+        Math.round((loggedDays.reduce((sum, d) => sum + d.fatG, 0) / loggedDays.length) * 10) / 10;
+      const avgFiberG =
+        Math.round((loggedDays.reduce((sum, d) => sum + d.fiberG, 0) / loggedDays.length) * 10) / 10;
+      const proteinGoalPct = Math.round((avgProteinG / targets.proteinTargetG) * 100);
+      const proteinHitDays = loggedDays.filter(
+        (d) => d.proteinG >= targets.proteinTargetG * 0.9
+      ).length;
+
+      const cacheKey = JSON.stringify({ startDate, endDate, targets, sanitizedDays });
+      if (!forceRefresh) {
+        const cached = getCachedWeeklyInsights(cacheKey);
+        if (cached) {
+          res.json(cached);
+          return;
+        }
+      }
+
+      const ai = getAiClient();
+      const prompt = [
+        `Analyze this user's 7-day nutrition window (${startDate} to ${endDate}).`,
+        `Daily Targets: ${targets.calorieTarget} kcal, ${targets.proteinTargetG}g protein, ${targets.carbsTargetG}g carbs, ${targets.fatTargetG}g fat.`,
+        `Logged-Day Averages (${loggedDays.length} of 7 days logged): ${avgCalories} kcal/day, ${avgProteinG}g protein/day (${proteinGoalPct}% of goal, hit >=90% goal on ${proteinHitDays}/${loggedDays.length} logged days), ${avgCarbsG}g carbs/day, ${avgFatG}g fat/day, ${avgFiberG}g fiber/day.`,
+        `Daily Breakdown JSON: ${JSON.stringify(sanitizedDays)}`,
+        'Return concise, specific, encouraging, evidence-based nutrition insights referencing their actual numbers and recurring meals.',
+      ].join('\n');
+
+      const response = await ai.models.generateContent({
+        model: 'gemini-4-hydrogen',
+        contents: prompt,
+        config: {
+          thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
+          systemInstruction:
+            'You are a precision sports nutrition coach summarizing 7 days of logged meals against personal calorie and macronutrient targets. Use ONLY the exact numbers and meal names provided in the user prompt. Keep prose crisp, practical, and free of fluff.',
+          responseMimeType: 'application/json',
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+              headline: {
+                type: Type.STRING,
+                description: 'One concise takeaway sentence summarizing the 7-day nutrition pattern.',
+              },
+              proteinAssessment: {
+                type: Type.STRING,
+                description: '2 short sentences comparing average daily protein intake and consistency against the user goal.',
+              },
+              calorieAssessment: {
+                type: Type.STRING,
+                description: '2 short sentences evaluating daily energy intake vs target and macro balance (carbs, fat, fiber).',
+              },
+              highlights: {
+                type: Type.ARRAY,
+                items: { type: Type.STRING },
+                description: '2 or 3 specific positive wins observed in the logged meals or days.',
+              },
+              actionItems: {
+                type: Type.ARRAY,
+                items: { type: Type.STRING },
+                description: '2 or 3 concrete, practical adjustments for next week based on gaps.',
+              },
+            },
+            required: [
+              'headline',
+              'proteinAssessment',
+              'calorieAssessment',
+              'highlights',
+              'actionItems',
+            ],
+          },
+        },
+      });
+
+      const rawText = (response.text ?? '').trim();
+      if (!rawText) {
+        res.status(502).json({ error: 'AI model returned an empty response.' });
+        return;
+      }
+
+      const parsed = JSON.parse(rawText);
+      const payload = {
+        ...parsed,
+        generatedAt: new Date().toISOString(),
+      };
+      setCachedWeeklyInsights(cacheKey, payload);
+      res.json(payload);
+    } catch (err: unknown) {
+      const parsedErr = parseGeminiError(err);
+      if (parsedErr.status === 429) {
+        console.warn('Weekly insights rate-limited (429 RESOURCE_EXHAUSTED).');
+      } else {
+        console.error('Weekly insights error:', parsedErr.code, parsedErr.message);
+      }
+      res.status(parsedErr.status).json({
+        error: parsedErr.message,
+        code: parsedErr.code,
+      });
+    }
   });
 
   app.post('/api/autocomplete-meal', async (req: Request, res: Response) => {
@@ -398,35 +593,49 @@ async function startServer() {
     });
   } else {
     const hmrDisabled = process.env.DISABLE_HMR === 'true';
-    const { createServer: createViteServer } = await import('vite');
-    const vite = await createViteServer({
-      server: {
-        middlewareMode: true,
-        hmr: hmrDisabled ? false : { server: httpServer },
-        ws: hmrDisabled ? false : undefined,
-      },
-      plugins: hmrDisabled
-        ? [
-            {
-              name: 'disable-hmr-client-socket',
-              transform(code: string, id: string) {
-                const cleanId = id.split('?')[0].replace(/\\/g, '/');
-                if (cleanId.endsWith('/vite/dist/client/client.mjs')) {
-                  return {
-                    code: code.replace(
-                      /let wsTransport = createWebSocketModuleRunnerTransport\(\{\s*createConnection:[\s\S]*?pingInterval:[^\n]*\n\s*\}\);/,
-                      'let wsTransport = { async connect() {}, async disconnect() {}, send() {} };'
-                    ),
-                    map: null,
-                  };
-                }
+    const viteReady = (async () => {
+      const { createServer: createViteServer } = await import('vite');
+      const vite = await createViteServer({
+        server: {
+          middlewareMode: true,
+          hmr: hmrDisabled ? false : true,
+          ws: hmrDisabled ? false : undefined,
+        },
+        plugins: hmrDisabled
+          ? [
+              {
+                name: 'disable-hmr-client-socket',
+                transform(code: string, id: string) {
+                  const cleanId = id.split('?')[0].replace(/\\/g, '/');
+                  if (cleanId.endsWith('/vite/dist/client/client.mjs')) {
+                    return {
+                      code: code.replace(
+                        /let wsTransport = createWebSocketModuleRunnerTransport\(\{\s*createConnection:[\s\S]*?pingInterval:[^\n]*\n\s*\}\);/,
+                        'let wsTransport = { async connect() {}, async disconnect() {}, send() {} };'
+                      ),
+                      map: null,
+                    };
+                  }
+                },
               },
-            },
-          ]
-        : [],
-      appType: 'spa',
+            ]
+          : [],
+        appType: 'spa',
+      });
+      return vite.middlewares;
+    })();
+    viteReady.catch((err) => {
+      console.error('Vite middleware initialization failed:', err);
     });
-    app.use(vite.middlewares);
+    app.use(async (req: Request, res: Response, next) => {
+      try {
+        const viteMiddlewares = await viteReady;
+        viteMiddlewares(req, res, next);
+      } catch (err) {
+        console.error('Error handling request during Vite startup:', req.path, err);
+        res.status(500).send('Development server failed to initialize.');
+      }
+    });
   }
 
   httpServer.listen(PORT, '0.0.0.0', () => {

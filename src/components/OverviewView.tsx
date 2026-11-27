@@ -6,6 +6,9 @@ import {
   ChevronRight,
   Copy,
   Check,
+  Dumbbell,
+  Footprints,
+  HeartPulse,
   Pencil,
   Plus,
   Scale,
@@ -13,12 +16,31 @@ import {
 } from 'lucide-react';
 import { BuddyCharacter } from './BuddyCharacter';
 import { ProgressBar } from './Charts';
-import type { BodyLog, FoodLog, FoodPreset, Household, MemberProfile } from '../types';
+import type { ActivityModalMode } from './ActivityWorkoutModal';
+import { WaterIntakeModule } from './WaterIntakeModule';
+import { WeeklyInsightsCard } from './WeeklyInsightsCard';
+import type { CreateWaterInput } from '../hooks/useHouseholdData';
+import type {
+  ActivityLog,
+  BodyLog,
+  FoodLog,
+  FoodPreset,
+  Household,
+  MemberProfile,
+  WaterLog,
+  WeightLog,
+  WorkoutLog,
+} from '../types';
 import {
+  BLUEPRINT_LIMITS,
+  buildCombinedWeightTimeline,
+  computeBmiFromWeight,
   computeBodyIndexesFromBmi,
+  daysBetweenDates,
   formatReadableDate,
   getLocalDateStr,
   shiftDateStr,
+  WORKOUT_TYPE_LABELS,
 } from '../types';
 
 interface OverviewViewProps {
@@ -28,6 +50,10 @@ interface OverviewViewProps {
   foodLogs: FoodLog[];
   foodPresets: FoodPreset[];
   bodyLogs: BodyLog[];
+  weightLogs: WeightLog[];
+  waterLogs: WaterLog[];
+  activityLogs: ActivityLog[];
+  workoutLogs: WorkoutLog[];
   selectedDate: string;
   justUpdatedBodyTick: number;
   onSelectDate: (date: string) => void;
@@ -35,11 +61,16 @@ interface OverviewViewProps {
     editLog?: FoodLog,
     initialMode?: 'ai' | 'manual' | 'presets'
   ) => void;
-  onOpenBodyModal: () => void;
+  onOpenBodyModal: (mode?: 'weight' | 'composition') => void;
+  onOpenActivityModal: (mode?: ActivityModalMode) => void;
+  onOpenAppleHealthSync: () => void;
   onDeleteFoodLog: (id: string) => Promise<void>;
+  onDeleteWorkoutLog: (id: string) => Promise<void>;
   onLogPreset: (preset: FoodPreset, date: string) => Promise<void>;
   onSaveLogAsPreset: (log: FoodLog) => Promise<void>;
-  onNavigateTab: (tab: 'food' | 'body' | 'compare' | 'targets') => void;
+  onAddWaterLog: (input: CreateWaterInput) => Promise<void>;
+  onDeleteWaterLog: (id: string) => Promise<void>;
+  onNavigateTab: (tab: 'food' | 'activity' | 'body' | 'compare' | 'targets') => void;
 }
 
 export const OverviewView: React.FC<OverviewViewProps> = ({
@@ -49,14 +80,23 @@ export const OverviewView: React.FC<OverviewViewProps> = ({
   foodLogs,
   foodPresets,
   bodyLogs,
+  weightLogs,
+  waterLogs,
+  activityLogs,
+  workoutLogs,
   selectedDate,
   justUpdatedBodyTick,
   onSelectDate,
   onOpenFoodModal,
   onOpenBodyModal,
+  onOpenActivityModal,
+  onOpenAppleHealthSync,
   onDeleteFoodLog,
+  onDeleteWorkoutLog,
   onLogPreset,
   onSaveLogAsPreset,
+  onAddWaterLog,
+  onDeleteWaterLog,
   onNavigateTab,
 }) => {
   const [copied, setCopied] = useState(false);
@@ -87,8 +127,27 @@ export const OverviewView: React.FC<OverviewViewProps> = ({
     [bodyLogs, myProfile.uid]
   );
 
+  const myWeightHistory = useMemo(
+    () => weightLogs.filter((w) => w.uid === myProfile.uid),
+    [weightLogs, myProfile.uid]
+  );
+
   const myLatestBody = myBodyHistory[0] ?? null;
   const myPreviousBody = myBodyHistory[1] ?? null;
+  const myLatestWeight = myWeightHistory[0] ?? null;
+
+  const myWeightTimeline = useMemo(
+    () => buildCombinedWeightTimeline(myWeightHistory, myBodyHistory, myProfile.heightCm),
+    [myWeightHistory, myBodyHistory, myProfile.heightCm]
+  );
+
+  const latestWeightEntry = myWeightTimeline[0] ?? null;
+  const previousWeightEntry = myWeightTimeline[1] ?? null;
+
+  const latestBmiMeta = useMemo(() => {
+    if (!latestWeightEntry) return null;
+    return computeBmiFromWeight(latestWeightEntry.weightKg, myProfile.heightCm);
+  }, [latestWeightEntry, myProfile.heightCm]);
 
   const myIndexes = useMemo(() => {
     if (!myLatestBody) return null;
@@ -99,6 +158,11 @@ export const OverviewView: React.FC<OverviewViewProps> = ({
       myProfile.heightCm
     );
   }, [myLatestBody, myProfile.heightCm]);
+
+  const daysSinceBodyScan = useMemo(() => {
+    if (!myLatestBody) return null;
+    return daysBetweenDates(myLatestBody.date, getLocalDateStr());
+  }, [myLatestBody]);
 
   const groupSummaries = useMemo(() => {
     return otherMembers.map((member) => {
@@ -115,6 +179,30 @@ export const OverviewView: React.FC<OverviewViewProps> = ({
       return { member, totals, mealCount: logs.length };
     });
   }, [otherMembers, foodLogs, selectedDate]);
+
+  const myDayActivity = useMemo(
+    () =>
+      activityLogs.find(
+        (a) => a.uid === myProfile.uid && a.date === selectedDate
+      ) ?? null,
+    [activityLogs, myProfile.uid, selectedDate]
+  );
+
+  const myDayWorkouts = useMemo(
+    () =>
+      workoutLogs.filter(
+        (w) => w.uid === myProfile.uid && w.date === selectedDate
+      ),
+    [workoutLogs, myProfile.uid, selectedDate]
+  );
+
+  const stepsTarget = myProfile.stepsTarget ?? BLUEPRINT_LIMITS.STEPS_TARGET_DEFAULT;
+  const myDaySteps = myDayActivity?.steps ?? 0;
+  const myDayWorkoutKcal = useMemo(
+    () => myDayWorkouts.reduce((s, w) => s + w.caloriesBurned, 0),
+    [myDayWorkouts]
+  );
+  const myDayActiveCal = Math.max(myDayActivity?.activeCalories ?? 0, myDayWorkoutKcal);
 
   const calRemaining = Math.round(myProfile.calorieTarget - myTotals.calories);
   const proteinRemaining = Math.round(myProfile.proteinTargetG - myTotals.proteinG);
@@ -198,11 +286,11 @@ export const OverviewView: React.FC<OverviewViewProps> = ({
         <div className="flex items-center gap-3">
           <button
             type="button"
-            onClick={onOpenBodyModal}
+            onClick={() => onOpenBodyModal('weight')}
             className="inline-flex items-center gap-2 px-4 py-2 text-xs font-semibold text-slate-700 bg-white border border-slate-200 rounded-lg hover:bg-slate-50 transition-colors whitespace-nowrap"
           >
             <Scale className="w-3.5 h-3.5" />
-            Log Body Check-in
+            Log Weight / Body
           </button>
           <button
             type="button"
@@ -316,7 +404,7 @@ export const OverviewView: React.FC<OverviewViewProps> = ({
 
         <div className="bg-white border border-slate-200 rounded-xl p-5 flex flex-col justify-between">
           <div className="flex items-center justify-between text-xs text-slate-500">
-            <span>Latest Body Composition</span>
+            <span>Weight &amp; Body Comp</span>
             <button
               type="button"
               onClick={() => onNavigateTab('body')}
@@ -325,39 +413,172 @@ export const OverviewView: React.FC<OverviewViewProps> = ({
               View trends
             </button>
           </div>
-          {myLatestBody && myIndexes ? (
+          {latestWeightEntry && latestBmiMeta ? (
             <div className="mt-2 space-y-2">
-              <div className="flex items-baseline justify-between">
+              <div className="flex items-baseline justify-between gap-2">
                 <span className="text-2xl font-mono font-semibold tabular-nums text-slate-900">
-                  BMI {myIndexes.bmi.toFixed(1)}
+                  {latestWeightEntry.weightKg.toFixed(1)} kg
                 </span>
                 <span className="text-xs font-mono tabular-nums text-emerald-700 font-semibold">
-                  {myLatestBody.muscleMassKg.toFixed(1)} kg muscle
+                  BMI {latestBmiMeta.bmi.toFixed(1)}
+                  {previousWeightEntry
+                    ? ` (${latestWeightEntry.weightKg - previousWeightEntry.weightKg >= 0 ? '+' : ''}${(
+                        latestWeightEntry.weightKg - previousWeightEntry.weightKg
+                      ).toFixed(1)} kg)`
+                    : ''}
                 </span>
               </div>
               <div className="text-xs font-mono tabular-nums text-slate-500">
-                Fat {myLatestBody.bodyFatPct.toFixed(1)}% · Est. {myIndexes.weightKg.toFixed(1)} kg ·
-                FFMI {myIndexes.ffmi.toFixed(1)}
+                {myLatestBody && myIndexes
+                  ? `Fat ${myLatestBody.bodyFatPct.toFixed(1)}% · Muscle ${myLatestBody.muscleMassKg.toFixed(1)} kg · ${
+                      daysSinceBodyScan !== null && daysSinceBodyScan >= 7
+                        ? `Scan due (${daysSinceBodyScan}d)`
+                        : daysSinceBodyScan === 0
+                          ? 'Scanned today'
+                          : `Scan ${daysSinceBodyScan}d ago`
+                    }`
+                  : 'Weekly fat & muscle scan not logged yet'}
+              </div>
+              <div className="pt-0.5 text-[11px] font-medium">
+                <button
+                  type="button"
+                  onClick={() => onOpenBodyModal('weight')}
+                  className="text-emerald-700 hover:text-emerald-800"
+                >
+                  + Log weight or weekly scan
+                </button>
               </div>
             </div>
           ) : (
             <div className="mt-3">
-              <p className="text-xs text-slate-500">No body weigh-in logged yet.</p>
+              <p className="text-xs text-slate-500">No weigh-in or body scan logged yet.</p>
               <button
                 type="button"
-                onClick={onOpenBodyModal}
+                onClick={() => onOpenBodyModal('weight')}
                 className="mt-2 text-xs font-semibold text-emerald-700 hover:text-emerald-800"
               >
-                Log first weigh-in
+                Log body weight
               </button>
             </div>
           )}
         </div>
       </div>
 
-      {/* Main Content Split: Presets + Today's Meals (8 cols) + Animated Companion & Group Snapshot (4 cols) */}
+      {/* Main Content Split: Water + Presets + Today's Meals (8 cols) + Animated Companion & Group Snapshot (4 cols) */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
         <div className="lg:col-span-8 space-y-6">
+          {/* Daily Water Intake Tracker */}
+          <WaterIntakeModule
+            uid={myProfile.uid}
+            selectedDate={selectedDate}
+            waterLogs={waterLogs}
+            onAddWaterLog={onAddWaterLog}
+            onDeleteWaterLog={onDeleteWaterLog}
+          />
+
+          {/* Daily Steps, Workouts & Apple Health Card */}
+          <section className="bg-white border border-slate-200 rounded-xl p-5 space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <h2 className="font-display text-sm font-semibold text-slate-900 flex items-center gap-2">
+                  <Footprints className="w-4 h-4 text-emerald-700" />
+                  Steps, Workouts &amp; Apple Health · {formatReadableDate(selectedDate)}
+                </h2>
+                <p className="text-xs text-slate-500">
+                  {myDaySteps.toLocaleString()} / {stepsTarget.toLocaleString()} steps ·{' '}
+                  {myDayActiveCal} active kcal · {myDayWorkouts.length}{' '}
+                  {myDayWorkouts.length === 1 ? 'workout' : 'workouts'}
+                </p>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={onOpenAppleHealthSync}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-slate-700 bg-white border border-slate-200 rounded-lg hover:bg-slate-50"
+                >
+                  <HeartPulse className="w-3.5 h-3.5 text-rose-600" />
+                  Apple Health Sync
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onOpenActivityModal('steps')}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white bg-emerald-600 rounded-lg hover:bg-emerald-700"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  Log Steps / Workout
+                </button>
+              </div>
+            </div>
+
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between text-xs font-mono tabular-nums">
+                <span className="text-slate-700 font-semibold">
+                  {myDaySteps.toLocaleString()} steps
+                  {myDayActivity?.distanceKm ? ` · ${myDayActivity.distanceKm.toFixed(1)} km` : ''}
+                </span>
+                <span className="text-emerald-700 font-medium">
+                  {Math.round((myDaySteps / Math.max(1, stepsTarget)) * 100)}% of goal
+                </span>
+              </div>
+              <ProgressBar value={myDaySteps} target={stepsTarget} colorClass="bg-emerald-600" />
+            </div>
+
+            {myDayWorkouts.length > 0 ? (
+              <div className="divide-y divide-slate-100 border border-slate-100 rounded-lg bg-slate-50/50">
+                {myDayWorkouts.map((wk) => (
+                  <div
+                    key={wk.id}
+                    className="px-3.5 py-2.5 flex items-center justify-between gap-3 text-xs"
+                  >
+                    <div className="flex items-center gap-2 min-w-0">
+                      <Dumbbell className="w-3.5 h-3.5 text-slate-500 shrink-0" />
+                      <div className="min-w-0">
+                        <span className="font-semibold text-slate-900 truncate block">
+                          {wk.title}
+                        </span>
+                        <span className="text-[11px] text-slate-500">
+                          {WORKOUT_TYPE_LABELS[wk.workoutType]} · {wk.durationMin} min
+                        </span>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <span className="font-mono tabular-nums font-medium text-slate-800">
+                        {wk.caloriesBurned} kcal
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => void onDeleteWorkoutLog(wk.id)}
+                        aria-label={`Delete ${wk.title}`}
+                        className="p-1 text-slate-400 hover:text-red-600 rounded"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="flex items-center justify-between text-xs text-slate-500">
+                <span>No workouts logged for {formatReadableDate(selectedDate)}.</span>
+                <button
+                  type="button"
+                  onClick={() => onNavigateTab('activity')}
+                  className="font-medium text-emerald-700 hover:text-emerald-800"
+                >
+                  Open Activity view →
+                </button>
+              </div>
+            )}
+          </section>
+
+          {/* AI-Powered 7-Day Nutrition Summary */}
+          <WeeklyInsightsCard
+            myProfile={myProfile}
+            foodLogs={foodLogs}
+            selectedDate={selectedDate}
+          />
+
           {/* Quick Daily Presets Card */}
           <section className="bg-white border border-slate-200 rounded-xl p-5 space-y-3">
             <div className="flex flex-wrap items-center justify-between gap-3">
@@ -590,6 +811,7 @@ export const OverviewView: React.FC<OverviewViewProps> = ({
             profile={myProfile}
             latestBody={myLatestBody}
             previousBody={myPreviousBody}
+            latestWeightLog={myLatestWeight}
             caloriesToday={myTotals.calories}
             proteinToday={myTotals.proteinG}
             justUpdatedTick={justUpdatedBodyTick}

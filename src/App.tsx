@@ -3,9 +3,10 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   Camera,
+  Footprints,
   LayoutDashboard,
   LogOut,
   Menu,
@@ -15,10 +16,15 @@ import {
   Utensils,
   X,
 } from 'lucide-react';
+import { ActivityView } from './components/ActivityView';
+import { ActivityWorkoutModal } from './components/ActivityWorkoutModal';
+import type { ActivityModalMode } from './components/ActivityWorkoutModal';
 import { AiFoodModal } from './components/AiFoodModal';
+import { AppleHealthSyncModal } from './components/AppleHealthSyncModal';
 import { AuthGate } from './components/AuthGate';
 import { BodyCompView } from './components/BodyCompView';
 import { BodyLogModal } from './components/BodyLogModal';
+import type { BodyModalMode } from './components/BodyLogModal';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { FoodLogView } from './components/FoodLogView';
 import { OverviewView } from './components/OverviewView';
@@ -29,7 +35,9 @@ import { signOutUser } from './firebase';
 import { useHouseholdData } from './hooks/useHouseholdData';
 import type { CreateFoodInput } from './hooks/useHouseholdData';
 import type { ActiveTab, FoodLog } from './types';
-import { getLocalDateStr } from './types';
+import { BLUEPRINT_LIMITS, getLocalDateStr } from './types';
+import { parseHealthSyncQueryParam } from './utils/appleHealthImport';
+import type { AppleHealthParseResult } from './utils/appleHealthImport';
 
 function MainApp() {
   const {
@@ -44,6 +52,10 @@ function MainApp() {
     foodLogs,
     foodPresets,
     bodyLogs,
+    weightLogs,
+    waterLogs,
+    activityLogs,
+    workoutLogs,
     actionError,
     createHousehold,
     joinHouseholdByCode,
@@ -57,6 +69,15 @@ function MainApp() {
     logFromPreset,
     addBodyLog,
     deleteBodyLog,
+    addWeightLog,
+    deleteWeightLog,
+    addWaterLog,
+    deleteWaterLog,
+    upsertDailyActivity,
+    deleteActivityLog,
+    addWorkoutLog,
+    deleteWorkoutLog,
+    importAppleHealthBatch,
     leaveHousehold,
   } = useHouseholdData();
 
@@ -68,6 +89,14 @@ function MainApp() {
   const [foodModalMode, setFoodModalMode] = useState<'ai' | 'manual' | 'presets'>('ai');
   const [editingFoodLog, setEditingFoodLog] = useState<FoodLog | null>(null);
   const [bodyModalOpen, setBodyModalOpen] = useState(false);
+  const [bodyModalMode, setBodyModalMode] = useState<BodyModalMode>('weight');
+  const [activityModalOpen, setActivityModalOpen] = useState(false);
+  const [activityModalMode, setActivityModalMode] = useState<ActivityModalMode>('steps');
+  const [appleSyncOpen, setAppleSyncOpen] = useState(false);
+  const [pendingHealthSync, setPendingHealthSync] =
+    useState<AppleHealthParseResult | null>(() =>
+      parseHealthSyncQueryParam(window.location.search)
+    );
   const [justUpdatedBodyTick, setJustUpdatedBodyTick] = useState(0);
 
   const initialInviteCode = useMemo(() => {
@@ -75,9 +104,25 @@ function MainApp() {
     return (params.get('join') || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
   }, []);
 
+  useEffect(() => {
+    if (pendingHealthSync && myProfile) {
+      setAppleSyncOpen(true);
+      const url = new URL(window.location.href);
+      if (url.searchParams.has('healthSync')) {
+        url.searchParams.delete('healthSync');
+        window.history.replaceState({}, '', url.toString());
+      }
+    }
+  }, [pendingHealthSync, myProfile]);
+
   const myLatestBody = useMemo(
     () => (myProfile ? bodyLogs.find((b) => b.uid === myProfile.uid) ?? null : null),
     [bodyLogs, myProfile]
+  );
+
+  const myLatestWeight = useMemo(
+    () => (myProfile ? weightLogs.find((w) => w.uid === myProfile.uid) ?? null : null),
+    [weightLogs, myProfile]
   );
 
   if (!authReady || !user || profileLoading || !userProfile?.householdId || !household || !myProfile) {
@@ -124,6 +169,20 @@ function MainApp() {
     });
   };
 
+  const openBodyModal = (mode: BodyModalMode = 'weight') => {
+    setBodyModalMode(mode);
+    setBodyModalOpen(true);
+  };
+
+  const openActivityModal = (mode: ActivityModalMode = 'steps') => {
+    setActivityModalMode(mode);
+    setActivityModalOpen(true);
+  };
+
+  const myDayActivity = myProfile
+    ? activityLogs.find((a) => a.uid === myProfile.uid && a.date === selectedDate) ?? null
+    : null;
+
   const navItems: {
     id: ActiveTab;
     label: string;
@@ -132,7 +191,8 @@ function MainApp() {
   }[] = [
     { id: 'overview', label: 'Daily Overview', shortLabel: 'Home', icon: LayoutDashboard },
     { id: 'food', label: 'Food & AI Camera', shortLabel: 'Food', icon: Utensils },
-    { id: 'body', label: 'BMI & Body', shortLabel: 'Body', icon: Scale },
+    { id: 'activity', label: 'Steps & Workouts', shortLabel: 'Activity', icon: Footprints },
+    { id: 'body', label: 'Weight & Body', shortLabel: 'Body', icon: Scale },
     {
       id: 'compare',
       label: otherMembers.length > 0 ? 'Group Compare' : 'Group & Partner',
@@ -274,14 +334,23 @@ function MainApp() {
               foodLogs={foodLogs}
               foodPresets={foodPresets}
               bodyLogs={bodyLogs}
+              weightLogs={weightLogs}
+              waterLogs={waterLogs}
+              activityLogs={activityLogs}
+              workoutLogs={workoutLogs}
               selectedDate={selectedDate}
               justUpdatedBodyTick={justUpdatedBodyTick}
               onSelectDate={setSelectedDate}
               onOpenFoodModal={openFoodModal}
-              onOpenBodyModal={() => setBodyModalOpen(true)}
+              onOpenBodyModal={openBodyModal}
+              onOpenActivityModal={openActivityModal}
+              onOpenAppleHealthSync={() => setAppleSyncOpen(true)}
               onDeleteFoodLog={deleteFoodLog}
+              onDeleteWorkoutLog={deleteWorkoutLog}
               onLogPreset={(preset, date) => logFromPreset(preset, date, 1)}
               onSaveLogAsPreset={handleSaveLogAsPreset}
+              onAddWaterLog={addWaterLog}
+              onDeleteWaterLog={deleteWaterLog}
               onNavigateTab={(tab) => setActiveTab(tab)}
             />
           )}
@@ -301,15 +370,31 @@ function MainApp() {
             />
           )}
 
+          {activeTab === 'activity' && (
+            <ActivityView
+              myProfile={myProfile}
+              otherMembers={otherMembers}
+              activityLogs={activityLogs}
+              workoutLogs={workoutLogs}
+              selectedDate={selectedDate}
+              onOpenActivityModal={openActivityModal}
+              onOpenAppleHealthSync={() => setAppleSyncOpen(true)}
+              onDeleteActivityLog={deleteActivityLog}
+              onDeleteWorkoutLog={deleteWorkoutLog}
+            />
+          )}
+
           {activeTab === 'body' && (
             <BodyCompView
               myProfile={myProfile}
               otherMembers={otherMembers}
               foodLogs={foodLogs}
               bodyLogs={bodyLogs}
+              weightLogs={weightLogs}
               justUpdatedBodyTick={justUpdatedBodyTick}
-              onOpenBodyModal={() => setBodyModalOpen(true)}
+              onOpenBodyModal={openBodyModal}
               onDeleteBodyLog={deleteBodyLog}
+              onDeleteWeightLog={deleteWeightLog}
             />
           )}
 
@@ -321,6 +406,9 @@ function MainApp() {
               otherMembers={otherMembers}
               foodLogs={foodLogs}
               bodyLogs={bodyLogs}
+              weightLogs={weightLogs}
+              activityLogs={activityLogs}
+              workoutLogs={workoutLogs}
               selectedDate={selectedDate}
               actionError={actionError}
               onSwitchToGroup={switchToGroupByCode}
@@ -363,13 +451,42 @@ function MainApp() {
 
       <BodyLogModal
         isOpen={bodyModalOpen}
+        initialMode={bodyModalMode}
+        defaultDate={selectedDate}
         heightCm={myProfile.heightCm}
+        targetWeightKg={myProfile.targetWeightKg}
         latestBodyLog={myLatestBody}
+        latestWeightLog={myLatestWeight}
         onClose={() => setBodyModalOpen(false)}
-        onSave={async (input) => {
+        onSaveWeight={async (input) => {
+          await addWeightLog(input);
+          setJustUpdatedBodyTick((t) => t + 1);
+        }}
+        onSaveComposition={async (input) => {
           await addBodyLog(input);
           setJustUpdatedBodyTick((t) => t + 1);
         }}
+      />
+
+      <ActivityWorkoutModal
+        isOpen={activityModalOpen}
+        initialMode={activityModalMode}
+        defaultDate={selectedDate}
+        stepsTarget={myProfile.stepsTarget ?? BLUEPRINT_LIMITS.STEPS_TARGET_DEFAULT}
+        existingDayActivity={myDayActivity}
+        onClose={() => setActivityModalOpen(false)}
+        onSaveDailyActivity={upsertDailyActivity}
+        onAddWorkout={addWorkoutLog}
+      />
+
+      <AppleHealthSyncModal
+        isOpen={appleSyncOpen}
+        initialPendingSync={pendingHealthSync}
+        onClose={() => {
+          setAppleSyncOpen(false);
+          setPendingHealthSync(null);
+        }}
+        onImport={importAppleHealthBatch}
       />
 
       {/* iPhone / Mobile Bottom Tab Bar */}
@@ -377,7 +494,7 @@ function MainApp() {
         aria-label="Mobile Navigation"
         className="lg:hidden fixed bottom-0 inset-x-0 z-30 bg-white/95 backdrop-blur-md border-t border-slate-200 pb-safe"
       >
-        <div className="grid grid-cols-5 h-14">
+        <div className="grid grid-cols-6 h-14">
           {navItems.map((item) => {
             const Icon = item.icon;
             const isActive = activeTab === item.id;

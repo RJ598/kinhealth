@@ -21,17 +21,26 @@ import { auth, db, handleFirestoreError, OperationType } from '../firebase';
 import {
   BLUEPRINT_LIMITS,
   clampNum,
+  computeBmiFromWeight,
+  computeBodyIndexes,
   computeBodyIndexesFromBmi,
   makeSafeId,
 } from '../types';
 import type {
+  ActivityLog,
   BodyLog,
   FoodLog,
   FoodPreset,
+  HealthSource,
   Household,
   MemberProfile,
   UserProfile,
+  WaterLog,
+  WeightLog,
+  WorkoutLog,
+  WorkoutType,
 } from '../types';
+import type { AppleHealthParseResult } from '../utils/appleHealthImport';
 
 export interface SetupMemberInput {
   displayName: string;
@@ -43,6 +52,7 @@ export interface SetupMemberInput {
   heightCm: number;
   targetWeightKg: number;
   targetMuscleMassKg: number;
+  stepsTarget?: number;
 }
 
 export interface CreateFoodInput {
@@ -73,9 +83,44 @@ export interface CreateFoodPresetInput {
 
 export interface CreateBodyInput {
   date: string;
-  bmi: number;
+  weightKg?: number;
+  bmi?: number;
   muscleMassKg: number;
   bodyFatPct: number;
+  notes: string;
+}
+
+export interface CreateWeightInput {
+  date: string;
+  weightKg: number;
+  notes: string;
+}
+
+export interface CreateWaterInput {
+  date: string;
+  amountMl: number;
+  label: string;
+}
+
+export interface CreateActivityInput {
+  date: string;
+  steps: number;
+  activeCalories: number;
+  distanceKm: number;
+  exerciseMinutes: number;
+  source: HealthSource;
+  notes: string;
+}
+
+export interface CreateWorkoutInput {
+  date: string;
+  workoutType: WorkoutType;
+  title: string;
+  durationMin: number;
+  caloriesBurned: number;
+  distanceKm: number;
+  avgHeartRate: number;
+  source: HealthSource;
   notes: string;
 }
 
@@ -156,6 +201,10 @@ export function useHouseholdData() {
   const [foodLogs, setFoodLogs] = useState<FoodLog[]>([]);
   const [foodPresets, setFoodPresets] = useState<FoodPreset[]>([]);
   const [bodyLogs, setBodyLogs] = useState<BodyLog[]>([]);
+  const [weightLogs, setWeightLogs] = useState<WeightLog[]>([]);
+  const [waterLogs, setWaterLogs] = useState<WaterLog[]>([]);
+  const [activityLogs, setActivityLogs] = useState<ActivityLog[]>([]);
+  const [workoutLogs, setWorkoutLogs] = useState<WorkoutLog[]>([]);
   const [actionError, setActionError] = useState<string | null>(null);
 
   // 1. Auth listener + private UserProfile bootstrap
@@ -170,6 +219,10 @@ export function useHouseholdData() {
         setFoodLogs([]);
         setFoodPresets([]);
         setBodyLogs([]);
+        setWeightLogs([]);
+        setWaterLogs([]);
+        setActivityLogs([]);
+        setWorkoutLogs([]);
         setProfileLoading(false);
         return;
       }
@@ -336,6 +389,126 @@ export function useHouseholdData() {
     return () => unsub();
   }, [authReady, user, householdId]);
 
+  // 6a-weight. Listen to Daily Weight Logs
+  useEffect(() => {
+    if (!authReady || !user || !householdId) {
+      setWeightLogs([]);
+      return;
+    }
+    const path = `households/${householdId}/weightLogs`;
+    const q = query(
+      collection(db, 'households', householdId, 'weightLogs'),
+      where('sharedUids', 'array-contains', user.uid)
+    );
+    const unsub = onSnapshot(
+      q,
+      (snap) => {
+        const items = snap.docs.map((d) => d.data() as WeightLog);
+        items.sort((a, b) => {
+          if (a.date !== b.date) return b.date.localeCompare(a.date);
+          const ta = a.createdAt?.toMillis?.() ?? 0;
+          const tb = b.createdAt?.toMillis?.() ?? 0;
+          return tb - ta;
+        });
+        setWeightLogs(items);
+      },
+      (err) => {
+        handleFirestoreError(err, OperationType.LIST, path);
+      }
+    );
+    return () => unsub();
+  }, [authReady, user, householdId]);
+
+  // 6a-water. Listen to Daily Water Intake Logs
+  useEffect(() => {
+    if (!authReady || !user || !householdId) {
+      setWaterLogs([]);
+      return;
+    }
+    const path = `households/${householdId}/waterLogs`;
+    const q = query(
+      collection(db, 'households', householdId, 'waterLogs'),
+      where('sharedUids', 'array-contains', user.uid)
+    );
+    const unsub = onSnapshot(
+      q,
+      (snap) => {
+        const items = snap.docs.map((d) => d.data() as WaterLog);
+        items.sort((a, b) => {
+          if (a.date !== b.date) return b.date.localeCompare(a.date);
+          const ta = a.createdAt?.toMillis?.() ?? 0;
+          const tb = b.createdAt?.toMillis?.() ?? 0;
+          return tb - ta;
+        });
+        setWaterLogs(items);
+      },
+      (err) => {
+        handleFirestoreError(err, OperationType.LIST, path);
+      }
+    );
+    return () => unsub();
+  }, [authReady, user, householdId]);
+
+  // 6a-activity. Listen to Daily Activity & Steps Logs
+  useEffect(() => {
+    if (!authReady || !user || !householdId) {
+      setActivityLogs([]);
+      return;
+    }
+    const path = `households/${householdId}/activityLogs`;
+    const q = query(
+      collection(db, 'households', householdId, 'activityLogs'),
+      where('sharedUids', 'array-contains', user.uid)
+    );
+    const unsub = onSnapshot(
+      q,
+      (snap) => {
+        const items = snap.docs.map((d) => d.data() as ActivityLog);
+        items.sort((a, b) => {
+          if (a.date !== b.date) return b.date.localeCompare(a.date);
+          const ta = a.updatedAt?.toMillis?.() ?? 0;
+          const tb = b.updatedAt?.toMillis?.() ?? 0;
+          return tb - ta;
+        });
+        setActivityLogs(items);
+      },
+      (err) => {
+        handleFirestoreError(err, OperationType.LIST, path);
+      }
+    );
+    return () => unsub();
+  }, [authReady, user, householdId]);
+
+  // 6a-workout. Listen to Workout Session Logs
+  useEffect(() => {
+    if (!authReady || !user || !householdId) {
+      setWorkoutLogs([]);
+      return;
+    }
+    const path = `households/${householdId}/workoutLogs`;
+    const q = query(
+      collection(db, 'households', householdId, 'workoutLogs'),
+      where('sharedUids', 'array-contains', user.uid)
+    );
+    const unsub = onSnapshot(
+      q,
+      (snap) => {
+        const items = snap.docs.map((d) => d.data() as WorkoutLog);
+        items.sort((a, b) => {
+          if (a.date !== b.date) return b.date.localeCompare(a.date);
+          const ta = a.createdAt?.toMillis?.() ?? 0;
+          const tb = b.createdAt?.toMillis?.() ?? 0;
+          return tb - ta;
+        });
+        setWorkoutLogs(items);
+      },
+      (err) => {
+        handleFirestoreError(err, OperationType.LIST, path);
+      }
+    );
+    return () => unsub();
+  }, [authReady, user, householdId]);
+
   // 6b. Listen to Shared Group Daily Food Presets
   useEffect(() => {
     if (!authReady || !user || !householdId) {
@@ -397,31 +570,35 @@ export function useHouseholdData() {
         const snap = await getDocs(legacyQuery);
         if (cancelled || snap.empty) return;
 
+        const existingIds = new Set(foodPresets.map((p) => p.id));
+
         for (const legacyDoc of snap.docs.slice(0, 100)) {
           if (cancelled) return;
           try {
-            const data = legacyDoc.data() as Partial<FoodPreset>;
-            const targetRef = doc(db, 'households', household.id, 'foodPresets', legacyDoc.id);
-            const existingTarget = await getDoc(targetRef);
-            if (!existingTarget.exists()) {
-              await setDoc(targetRef, {
-                ...buildGroupPresetFields({
-                  id: legacyDoc.id,
-                  uid: user.uid,
-                  authorName,
-                  name: data.name,
-                  mealType: data.mealType,
-                  servingNote: data.servingNote,
-                  calories: data.calories,
-                  proteinG: data.proteinG,
-                  carbsG: data.carbsG,
-                  fatG: data.fatG,
-                  fiberG: data.fiberG,
-                  sharedUids,
-                }),
-                createdAt: serverTimestamp(),
-                updatedAt: serverTimestamp(),
-              });
+            if (!existingIds.has(legacyDoc.id)) {
+              const data = legacyDoc.data() as Partial<FoodPreset>;
+              const targetRef = doc(db, 'households', household.id, 'foodPresets', legacyDoc.id);
+              const existingTarget = await getDoc(targetRef);
+              if (!existingTarget.exists()) {
+                await setDoc(targetRef, {
+                  ...buildGroupPresetFields({
+                    id: legacyDoc.id,
+                    uid: user.uid,
+                    authorName,
+                    name: data.name,
+                    mealType: data.mealType,
+                    servingNote: data.servingNote,
+                    calories: data.calories,
+                    proteinG: data.proteinG,
+                    carbsG: data.carbsG,
+                    fatG: data.fatG,
+                    fiberG: data.fiberG,
+                    sharedUids,
+                  }),
+                  createdAt: serverTimestamp(),
+                  updatedAt: serverTimestamp(),
+                });
+              }
             }
             await deleteDoc(legacyDoc.ref);
           } catch (docErr) {
@@ -462,6 +639,18 @@ export function useHouseholdData() {
     const needsSyncBody = bodyLogs.filter(
       (b) => b.uid === user.uid && hasMismatch(b.sharedUids)
     );
+    const needsSyncWeight = weightLogs.filter(
+      (w) => w.uid === user.uid && hasMismatch(w.sharedUids)
+    );
+    const needsSyncWater = waterLogs.filter(
+      (w) => w.uid === user.uid && hasMismatch(w.sharedUids)
+    );
+    const needsSyncActivity = activityLogs.filter(
+      (a) => a.uid === user.uid && hasMismatch(a.sharedUids)
+    );
+    const needsSyncWorkouts = workoutLogs.filter(
+      (w) => w.uid === user.uid && hasMismatch(w.sharedUids)
+    );
     const myMember = members.find((m) => m.uid === user.uid);
     const needsSyncMember = Boolean(myMember && hasMismatch(myMember.sharedUids));
 
@@ -469,7 +658,11 @@ export function useHouseholdData() {
       !needsSyncMember &&
       needsSyncFood.length === 0 &&
       needsSyncPresets.length === 0 &&
-      needsSyncBody.length === 0
+      needsSyncBody.length === 0 &&
+      needsSyncWeight.length === 0 &&
+      needsSyncWater.length === 0 &&
+      needsSyncActivity.length === 0 &&
+      needsSyncWorkouts.length === 0
     ) {
       return;
     }
@@ -542,16 +735,64 @@ export function useHouseholdData() {
         },
       }));
 
+      const weightUpdates = needsSyncWeight.slice(0, 120).map((item) => ({
+        ref: doc(db, 'households', household.id, 'weightLogs', item.id),
+        data: {
+          sharedUids: expected,
+          updatedAt: serverTimestamp(),
+        },
+      }));
+
+      const waterUpdates = needsSyncWater.slice(0, 120).map((item) => ({
+        ref: doc(db, 'households', household.id, 'waterLogs', item.id),
+        data: {
+          sharedUids: expected,
+          updatedAt: serverTimestamp(),
+        },
+      }));
+
+      const activityUpdates = needsSyncActivity.slice(0, 120).map((item) => ({
+        ref: doc(db, 'households', household.id, 'activityLogs', item.id),
+        data: {
+          sharedUids: expected,
+          updatedAt: serverTimestamp(),
+        },
+      }));
+
+      const workoutUpdates = needsSyncWorkouts.slice(0, 120).map((item) => ({
+        ref: doc(db, 'households', household.id, 'workoutLogs', item.id),
+        data: {
+          sharedUids: expected,
+          updatedAt: serverTimestamp(),
+        },
+      }));
+
       await Promise.all([
         syncDocsSafely(presetUpdates),
         syncDocsSafely(memberUpdates),
         syncDocsSafely(foodUpdates),
         syncDocsSafely(bodyUpdates),
+        syncDocsSafely(weightUpdates),
+        syncDocsSafely(waterUpdates),
+        syncDocsSafely(activityUpdates),
+        syncDocsSafely(workoutUpdates),
       ]);
     };
 
     void runSync();
-  }, [user, household, members, foodLogs, foodPresets, bodyLogs, userProfile?.displayName]);
+  }, [
+    user,
+    household,
+    members,
+    foodLogs,
+    foodPresets,
+    bodyLogs,
+    weightLogs,
+    waterLogs,
+    activityLogs,
+    workoutLogs,
+    userProfile?.displayName,
+  ]);
 
   const myProfile = useMemo(
     () => members.find((m) => m.uid === user?.uid) ?? null,
@@ -638,6 +879,11 @@ export function useHouseholdData() {
             10,
             150
           ),
+          stepsTarget: clampNum(
+            Math.round(setup.stepsTarget ?? BLUEPRINT_LIMITS.STEPS_TARGET_DEFAULT),
+            BLUEPRINT_LIMITS.STEPS_TARGET_MIN,
+            BLUEPRINT_LIMITS.STEPS_TARGET_MAX
+          ),
           sharedUids: [user.uid],
           updatedAt: serverTimestamp(),
         });
@@ -654,7 +900,11 @@ export function useHouseholdData() {
       setup: SetupMemberInput,
       migrateFoodLogs: FoodLog[] = [],
       migrateBodyLogs: BodyLog[] = [],
-      migrateFoodPresets: FoodPreset[] = []
+      migrateFoodPresets: FoodPreset[] = [],
+      migrateWaterLogs: WaterLog[] = [],
+      migrateWeightLogs: WeightLog[] = [],
+      migrateActivityLogs: ActivityLog[] = [],
+      migrateWorkoutLogs: WorkoutLog[] = []
     ) => {
       if (!user) return;
       setActionError(null);
@@ -764,6 +1014,11 @@ export function useHouseholdData() {
             10,
             150
           ),
+          stepsTarget: clampNum(
+            Math.round(setup.stepsTarget ?? BLUEPRINT_LIMITS.STEPS_TARGET_DEFAULT),
+            BLUEPRINT_LIMITS.STEPS_TARGET_MIN,
+            BLUEPRINT_LIMITS.STEPS_TARGET_MAX
+          ),
           sharedUids: fullMemberIds,
           updatedAt: serverTimestamp(),
         });
@@ -831,6 +1086,78 @@ export function useHouseholdData() {
             updatedAt: serverTimestamp(),
           });
         }
+        for (const w of migrateWaterLogs.filter((x) => x.uid === user.uid).slice(0, 100)) {
+          batch.set(doc(db, 'households', targetHouseholdId, 'waterLogs', w.id), {
+            id: w.id,
+            uid: user.uid,
+            authorName: safeDisplayName,
+            date: w.date,
+            amountMl: clampNum(
+              Math.round(w.amountMl),
+              BLUEPRINT_LIMITS.WATER_ML_MIN,
+              BLUEPRINT_LIMITS.WATER_ML_MAX
+            ),
+            label: (w.label || '')
+              .trim()
+              .slice(0, BLUEPRINT_LIMITS.WATER_LABEL_MAX),
+            sharedUids: fullMemberIds,
+            createdAt: serverTimestamp(),
+            updatedAt: serverTimestamp(),
+          });
+        }
+
+        for (const w of migrateWeightLogs.filter((x) => x.uid === user.uid).slice(0, 60)) {
+          batch.set(doc(db, 'households', targetHouseholdId, 'weightLogs', w.id), {
+            id: w.id,
+            uid: user.uid,
+            authorName: safeDisplayName,
+            date: w.date,
+            weightKg: clampNum(Number(w.weightKg.toFixed(1)), 20, 400),
+            bmi: clampNum(Number(w.bmi.toFixed(1)), 5, 100),
+            notes: (w.notes || '').trim().slice(0, BLUEPRINT_LIMITS.BODY_NOTES_MAX),
+            sharedUids: fullMemberIds,
+            createdAt: serverTimestamp(),
+            updatedAt: serverTimestamp(),
+          });
+        }
+
+        for (const a of migrateActivityLogs.filter((x) => x.uid === user.uid).slice(0, 60)) {
+          batch.set(doc(db, 'households', targetHouseholdId, 'activityLogs', a.id), {
+            id: a.id,
+            uid: user.uid,
+            authorName: safeDisplayName,
+            date: a.date,
+            steps: clampNum(Math.round(a.steps), 0, BLUEPRINT_LIMITS.STEPS_MAX),
+            activeCalories: clampNum(Math.round(a.activeCalories), 0, BLUEPRINT_LIMITS.ACTIVE_CAL_MAX),
+            distanceKm: clampNum(Number(a.distanceKm.toFixed(1)), 0, BLUEPRINT_LIMITS.DISTANCE_KM_MAX),
+            exerciseMinutes: clampNum(Math.round(a.exerciseMinutes), 0, 1440),
+            source: a.source,
+            notes: (a.notes || '').trim().slice(0, BLUEPRINT_LIMITS.BODY_NOTES_MAX),
+            sharedUids: fullMemberIds,
+            createdAt: serverTimestamp(),
+            updatedAt: serverTimestamp(),
+          });
+        }
+
+        for (const wk of migrateWorkoutLogs.filter((x) => x.uid === user.uid).slice(0, 60)) {
+          batch.set(doc(db, 'households', targetHouseholdId, 'workoutLogs', wk.id), {
+            id: wk.id,
+            uid: user.uid,
+            authorName: safeDisplayName,
+            date: wk.date,
+            workoutType: wk.workoutType,
+            title: (wk.title || 'Workout').trim().slice(0, BLUEPRINT_LIMITS.WORKOUT_TITLE_MAX),
+            durationMin: clampNum(Math.round(wk.durationMin), 1, 1440),
+            caloriesBurned: clampNum(Math.round(wk.caloriesBurned), 0, BLUEPRINT_LIMITS.WORKOUT_CAL_MAX),
+            distanceKm: clampNum(Number(wk.distanceKm.toFixed(1)), 0, BLUEPRINT_LIMITS.DISTANCE_KM_MAX),
+            avgHeartRate: clampNum(Math.round(wk.avgHeartRate), 0, 260),
+            source: wk.source,
+            notes: (wk.notes || '').trim().slice(0, BLUEPRINT_LIMITS.BODY_NOTES_MAX),
+            sharedUids: fullMemberIds,
+            createdAt: serverTimestamp(),
+            updatedAt: serverTimestamp(),
+          });
+        }
 
         await batch.commit();
       } catch (err) {
@@ -859,13 +1186,28 @@ export function useHouseholdData() {
           heightCm: myProfile.heightCm,
           targetWeightKg: myProfile.targetWeightKg,
           targetMuscleMassKg: myProfile.targetMuscleMassKg,
+          stepsTarget: myProfile.stepsTarget,
         },
         foodLogs,
         bodyLogs,
-        foodPresets
+        foodPresets,
+        waterLogs,
+        weightLogs,
+        activityLogs,
+        workoutLogs
       );
     },
-    [myProfile, joinHouseholdByCode, foodLogs, bodyLogs, foodPresets]
+    [
+      myProfile,
+      joinHouseholdByCode,
+      foodLogs,
+      bodyLogs,
+      foodPresets,
+      waterLogs,
+      weightLogs,
+      activityLogs,
+      workoutLogs,
+    ]
   );
 
   const updateMyTargets = useCallback(
@@ -909,6 +1251,15 @@ export function useHouseholdData() {
             10,
             150
           ),
+          stepsTarget: clampNum(
+            Math.round(
+              setup.stepsTarget ??
+                myProfile?.stepsTarget ??
+                BLUEPRINT_LIMITS.STEPS_TARGET_DEFAULT
+            ),
+            BLUEPRINT_LIMITS.STEPS_TARGET_MIN,
+            BLUEPRINT_LIMITS.STEPS_TARGET_MAX
+          ),
           sharedUids,
           updatedAt: serverTimestamp(),
         });
@@ -933,7 +1284,7 @@ export function useHouseholdData() {
         );
       }
     },
-    [user, household, myProfile?.displayName]
+    [user, household, myProfile?.displayName, myProfile?.stepsTarget]
   );
 
   const addFoodLog = useCallback(
@@ -1121,12 +1472,24 @@ export function useHouseholdData() {
           .trim()
           .slice(0, BLUEPRINT_LIMITS.DISPLAY_NAME_MAX) || 'Member';
       const heightCm = myProfile?.heightCm || 172;
-      const indexes = computeBodyIndexesFromBmi(
-        input.bmi,
-        input.muscleMassKg,
-        input.bodyFatPct,
-        heightCm
-      );
+      const useDirectWeight =
+        typeof input.weightKg === 'number' && Number.isFinite(input.weightKg);
+      const indexes = useDirectWeight
+        ? {
+            ...computeBodyIndexes(
+              input.weightKg!,
+              input.muscleMassKg,
+              input.bodyFatPct,
+              heightCm
+            ),
+            weightKg: clampNum(Number(input.weightKg!.toFixed(1)), 20, 400),
+          }
+        : computeBodyIndexesFromBmi(
+            input.bmi ?? 22.5,
+            input.muscleMassKg,
+            input.bodyFatPct,
+            heightCm
+          );
 
       try {
         await setDoc(doc(db, 'households', household.id, 'bodyLogs', logId), {
@@ -1167,6 +1530,371 @@ export function useHouseholdData() {
     [user, household]
   );
 
+  const addWeightLog = useCallback(
+    async (input: CreateWeightInput) => {
+      if (!user || !household) return;
+      const logId = makeSafeId('weight');
+      const path = `households/${household.id}/weightLogs/${logId}`;
+      const sharedUids = Array.from(
+        new Set([user.uid, ...household.memberIds])
+      ).slice(0, 10);
+      const authorName =
+        (myProfile?.displayName || userProfile?.displayName || 'Member')
+          .trim()
+          .slice(0, BLUEPRINT_LIMITS.DISPLAY_NAME_MAX) || 'Member';
+      const heightCm = myProfile?.heightCm || 172;
+      const derived = computeBmiFromWeight(input.weightKg, heightCm);
+
+      try {
+        await setDoc(doc(db, 'households', household.id, 'weightLogs', logId), {
+          id: logId,
+          uid: user.uid,
+          authorName,
+          date: input.date,
+          weightKg: derived.weightKg,
+          bmi: derived.bmi,
+          notes: input.notes.trim().slice(0, BLUEPRINT_LIMITS.BODY_NOTES_MAX),
+          sharedUids,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
+      } catch (err) {
+        handleFirestoreError(err, OperationType.CREATE, path);
+      }
+    },
+    [user, household, myProfile, userProfile?.displayName]
+  );
+
+  const deleteWeightLog = useCallback(
+    async (logId: string) => {
+      if (!user || !household) return;
+      const path = `households/${household.id}/weightLogs/${logId}`;
+      try {
+        await deleteDoc(doc(db, 'households', household.id, 'weightLogs', logId));
+      } catch (err) {
+        handleFirestoreError(err, OperationType.DELETE, path);
+      }
+    },
+    [user, household]
+  );
+
+  const addWaterLog = useCallback(
+    async (input: CreateWaterInput) => {
+      if (!user || !household) return;
+      const logId = makeSafeId('water');
+      const path = `households/${household.id}/waterLogs/${logId}`;
+      const sharedUids = Array.from(
+        new Set([user.uid, ...household.memberIds])
+      ).slice(0, 10);
+      const authorName =
+        (myProfile?.displayName || userProfile?.displayName || 'Member')
+          .trim()
+          .slice(0, BLUEPRINT_LIMITS.DISPLAY_NAME_MAX) || 'Member';
+      const safeAmount = clampNum(
+        Math.round(input.amountMl),
+        BLUEPRINT_LIMITS.WATER_ML_MIN,
+        BLUEPRINT_LIMITS.WATER_ML_MAX
+      );
+      const safeLabel = (input.label || '')
+        .trim()
+        .slice(0, BLUEPRINT_LIMITS.WATER_LABEL_MAX);
+
+      try {
+        await setDoc(doc(db, 'households', household.id, 'waterLogs', logId), {
+          id: logId,
+          uid: user.uid,
+          authorName,
+          date: input.date,
+          amountMl: safeAmount,
+          label: safeLabel,
+          sharedUids,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
+      } catch (err) {
+        handleFirestoreError(err, OperationType.CREATE, path);
+      }
+    },
+    [user, household, myProfile?.displayName, userProfile?.displayName]
+  );
+
+  const deleteWaterLog = useCallback(
+    async (logId: string) => {
+      if (!user || !household) return;
+      const path = `households/${household.id}/waterLogs/${logId}`;
+      try {
+        await deleteDoc(doc(db, 'households', household.id, 'waterLogs', logId));
+      } catch (err) {
+        handleFirestoreError(err, OperationType.DELETE, path);
+      }
+    },
+    [user, household]
+  );
+
+  const upsertDailyActivity = useCallback(
+    async (input: CreateActivityInput) => {
+      if (!user || !household) return;
+      const logId = `act_${user.uid}_${input.date}`;
+      const path = `households/${household.id}/activityLogs/${logId}`;
+      const docRef = doc(db, 'households', household.id, 'activityLogs', logId);
+      const sharedUids = Array.from(
+        new Set([user.uid, ...household.memberIds])
+      ).slice(0, 10);
+      const authorName =
+        (myProfile?.displayName || userProfile?.displayName || 'Member')
+          .trim()
+          .slice(0, BLUEPRINT_LIMITS.DISPLAY_NAME_MAX) || 'Member';
+
+      const payload = {
+        authorName,
+        date: input.date,
+        steps: clampNum(Math.round(input.steps), 0, BLUEPRINT_LIMITS.STEPS_MAX),
+        activeCalories: clampNum(Math.round(input.activeCalories), 0, BLUEPRINT_LIMITS.ACTIVE_CAL_MAX),
+        distanceKm: clampNum(Number(input.distanceKm.toFixed(1)), 0, BLUEPRINT_LIMITS.DISTANCE_KM_MAX),
+        exerciseMinutes: clampNum(Math.round(input.exerciseMinutes), 0, 1440),
+        source: input.source,
+        notes: (input.notes || '').trim().slice(0, BLUEPRINT_LIMITS.BODY_NOTES_MAX),
+        sharedUids,
+        updatedAt: serverTimestamp(),
+      };
+
+      try {
+        const snap = await getDoc(docRef);
+        if (snap.exists()) {
+          await updateDoc(docRef, payload);
+        } else {
+          await setDoc(docRef, {
+            id: logId,
+            uid: user.uid,
+            ...payload,
+            createdAt: serverTimestamp(),
+          });
+        }
+      } catch (err) {
+        handleFirestoreError(err, OperationType.WRITE, path);
+      }
+    },
+    [user, household, myProfile?.displayName, userProfile?.displayName]
+  );
+
+  const deleteActivityLog = useCallback(
+    async (logId: string) => {
+      if (!user || !household) return;
+      const path = `households/${household.id}/activityLogs/${logId}`;
+      try {
+        await deleteDoc(doc(db, 'households', household.id, 'activityLogs', logId));
+      } catch (err) {
+        handleFirestoreError(err, OperationType.DELETE, path);
+      }
+    },
+    [user, household]
+  );
+
+  const addWorkoutLog = useCallback(
+    async (input: CreateWorkoutInput) => {
+      if (!user || !household) return;
+      const logId = makeSafeId('wkt');
+      const path = `households/${household.id}/workoutLogs/${logId}`;
+      const sharedUids = Array.from(
+        new Set([user.uid, ...household.memberIds])
+      ).slice(0, 10);
+      const authorName =
+        (myProfile?.displayName || userProfile?.displayName || 'Member')
+          .trim()
+          .slice(0, BLUEPRINT_LIMITS.DISPLAY_NAME_MAX) || 'Member';
+
+      try {
+        await setDoc(doc(db, 'households', household.id, 'workoutLogs', logId), {
+          id: logId,
+          uid: user.uid,
+          authorName,
+          date: input.date,
+          workoutType: input.workoutType,
+          title: input.title.trim().slice(0, BLUEPRINT_LIMITS.WORKOUT_TITLE_MAX) || 'Workout',
+          durationMin: clampNum(
+            Math.round(input.durationMin),
+            BLUEPRINT_LIMITS.WORKOUT_DURATION_MIN,
+            BLUEPRINT_LIMITS.WORKOUT_DURATION_MAX
+          ),
+          caloriesBurned: clampNum(Math.round(input.caloriesBurned), 0, BLUEPRINT_LIMITS.WORKOUT_CAL_MAX),
+          distanceKm: clampNum(Number(input.distanceKm.toFixed(1)), 0, BLUEPRINT_LIMITS.DISTANCE_KM_MAX),
+          avgHeartRate: clampNum(Math.round(input.avgHeartRate), 0, 260),
+          source: input.source,
+          notes: (input.notes || '').trim().slice(0, BLUEPRINT_LIMITS.BODY_NOTES_MAX),
+          sharedUids,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
+      } catch (err) {
+        handleFirestoreError(err, OperationType.CREATE, path);
+      }
+    },
+    [user, household, myProfile?.displayName, userProfile?.displayName]
+  );
+
+  const deleteWorkoutLog = useCallback(
+    async (logId: string) => {
+      if (!user || !household) return;
+      const path = `households/${household.id}/workoutLogs/${logId}`;
+      try {
+        await deleteDoc(doc(db, 'households', household.id, 'workoutLogs', logId));
+      } catch (err) {
+        handleFirestoreError(err, OperationType.DELETE, path);
+      }
+    },
+    [user, household]
+  );
+
+  const importAppleHealthBatch = useCallback(
+    async (
+      parsed: AppleHealthParseResult,
+      options: { includeWeights?: boolean } = {}
+    ): Promise<{ activitiesImported: number; workoutsImported: number; weightsImported: number }> => {
+      if (!user || !household) {
+        return { activitiesImported: 0, workoutsImported: 0, weightsImported: 0 };
+      }
+      const sharedUids = Array.from(
+        new Set([user.uid, ...household.memberIds])
+      ).slice(0, 10);
+      const authorName =
+        (myProfile?.displayName || userProfile?.displayName || 'Member')
+          .trim()
+          .slice(0, BLUEPRINT_LIMITS.DISPLAY_NAME_MAX) || 'Member';
+      const heightCm = myProfile?.heightCm || 172;
+
+      const existingActivityIds = new Set(activityLogs.map((a) => a.id));
+      const existingWorkoutIds = new Set(workoutLogs.map((w) => w.id));
+      const existingWeightDates = new Set(
+        weightLogs.filter((w) => w.uid === user.uid).map((w) => w.date)
+      );
+
+      type BatchOp = {
+        kind: 'set' | 'update';
+        ref: ReturnType<typeof doc>;
+        data: Record<string, unknown>;
+      };
+      const ops: BatchOp[] = [];
+      let activitiesImported = 0;
+      let workoutsImported = 0;
+      let weightsImported = 0;
+
+      for (const act of parsed.activities.slice(0, 90)) {
+        const logId = `act_${user.uid}_${act.date}`;
+        const ref = doc(db, 'households', household.id, 'activityLogs', logId);
+        const common = {
+          authorName,
+          date: act.date,
+          steps: clampNum(Math.round(act.steps), 0, BLUEPRINT_LIMITS.STEPS_MAX),
+          activeCalories: clampNum(Math.round(act.activeCalories), 0, BLUEPRINT_LIMITS.ACTIVE_CAL_MAX),
+          distanceKm: clampNum(Number(act.distanceKm.toFixed(1)), 0, BLUEPRINT_LIMITS.DISTANCE_KM_MAX),
+          exerciseMinutes: clampNum(Math.round(act.exerciseMinutes), 0, 1440),
+          source: act.source,
+          notes: (act.notes || '').trim().slice(0, BLUEPRINT_LIMITS.BODY_NOTES_MAX),
+          sharedUids,
+          updatedAt: serverTimestamp(),
+        };
+        if (existingActivityIds.has(logId)) {
+          ops.push({ kind: 'update', ref, data: common });
+        } else {
+          ops.push({
+            kind: 'set',
+            ref,
+            data: {
+              id: logId,
+              uid: user.uid,
+              ...common,
+              createdAt: serverTimestamp(),
+            },
+          });
+        }
+        activitiesImported += 1;
+      }
+
+      for (const wk of parsed.workouts.slice(0, 120)) {
+        const logId = `wkt_${user.uid.slice(0, 12)}_${wk.externalKey}`;
+        if (existingWorkoutIds.has(logId)) continue;
+        const ref = doc(db, 'households', household.id, 'workoutLogs', logId);
+        ops.push({
+          kind: 'set',
+          ref,
+          data: {
+            id: logId,
+            uid: user.uid,
+            authorName,
+            date: wk.date,
+            workoutType: wk.workoutType,
+            title: wk.title.trim().slice(0, BLUEPRINT_LIMITS.WORKOUT_TITLE_MAX) || 'Workout',
+            durationMin: clampNum(Math.round(wk.durationMin), 1, 1440),
+            caloriesBurned: clampNum(Math.round(wk.caloriesBurned), 0, BLUEPRINT_LIMITS.WORKOUT_CAL_MAX),
+            distanceKm: clampNum(Number(wk.distanceKm.toFixed(1)), 0, BLUEPRINT_LIMITS.DISTANCE_KM_MAX),
+            avgHeartRate: clampNum(Math.round(wk.avgHeartRate), 0, 260),
+            source: wk.source,
+            notes: (wk.notes || '').trim().slice(0, BLUEPRINT_LIMITS.BODY_NOTES_MAX),
+            sharedUids,
+            createdAt: serverTimestamp(),
+            updatedAt: serverTimestamp(),
+          },
+        });
+        workoutsImported += 1;
+      }
+
+      if (options.includeWeights) {
+        for (const wt of parsed.weights.slice(0, 90)) {
+          if (existingWeightDates.has(wt.date)) continue;
+          const logId = `weight_ah_${user.uid.slice(0, 12)}_${wt.date}`;
+          const ref = doc(db, 'households', household.id, 'weightLogs', logId);
+          const derived = computeBmiFromWeight(wt.weightKg, heightCm);
+          ops.push({
+            kind: 'set',
+            ref,
+            data: {
+              id: logId,
+              uid: user.uid,
+              authorName,
+              date: wt.date,
+              weightKg: derived.weightKg,
+              bmi: derived.bmi,
+              notes: (wt.notes || 'Apple Health').trim().slice(0, BLUEPRINT_LIMITS.BODY_NOTES_MAX),
+              sharedUids,
+              createdAt: serverTimestamp(),
+              updatedAt: serverTimestamp(),
+            },
+          });
+          weightsImported += 1;
+        }
+      }
+
+      try {
+        for (let i = 0; i < ops.length; i += 350) {
+          const chunk = ops.slice(i, i + 350);
+          const batch = writeBatch(db);
+          for (const op of chunk) {
+            if (op.kind === 'update') {
+              batch.update(op.ref, op.data);
+            } else {
+              batch.set(op.ref, op.data);
+            }
+          }
+          await batch.commit();
+        }
+      } catch (err) {
+        handleFirestoreError(err, OperationType.WRITE, `households/${household.id}/activityLogs`);
+      }
+
+      return { activitiesImported, workoutsImported, weightsImported };
+    },
+    [
+      user,
+      household,
+      myProfile?.displayName,
+      myProfile?.heightCm,
+      userProfile?.displayName,
+      activityLogs,
+      workoutLogs,
+      weightLogs,
+    ]
+  );
+
   const leaveHousehold = useCallback(async () => {
     if (!user || !household || household.ownerId === user.uid) return;
     try {
@@ -1198,6 +1926,10 @@ export function useHouseholdData() {
     foodLogs,
     foodPresets,
     bodyLogs,
+    weightLogs,
+    waterLogs,
+    activityLogs,
+    workoutLogs,
     actionError,
     setActionError,
     createHousehold,
@@ -1212,6 +1944,15 @@ export function useHouseholdData() {
     logFromPreset,
     addBodyLog,
     deleteBodyLog,
+    addWeightLog,
+    deleteWeightLog,
+    addWaterLog,
+    deleteWaterLog,
+    upsertDailyActivity,
+    deleteActivityLog,
+    addWorkoutLog,
+    deleteWorkoutLog,
+    importAppleHealthBatch,
     leaveHousehold,
   };
 }

@@ -2,8 +2,21 @@ import React, { useMemo, useState } from 'react';
 import { ArrowRight, Check, Copy, UserPlus, Users } from 'lucide-react';
 import { MultiTrendChart, ProgressBar, SERIES_COLORS } from './Charts';
 import type { ChartSeries } from './Charts';
-import type { BodyLog, FoodLog, Household, MemberProfile } from '../types';
-import { getLocalDateStr, shiftDateStr } from '../types';
+import type {
+  ActivityLog,
+  BodyLog,
+  FoodLog,
+  Household,
+  MemberProfile,
+  WeightLog,
+  WorkoutLog,
+} from '../types';
+import {
+  BLUEPRINT_LIMITS,
+  buildCombinedWeightTimeline,
+  getLocalDateStr,
+  shiftDateStr,
+} from '../types';
 
 interface PartnerCompareViewProps {
   household: Household;
@@ -12,6 +25,9 @@ interface PartnerCompareViewProps {
   otherMembers: MemberProfile[];
   foodLogs: FoodLog[];
   bodyLogs: BodyLog[];
+  weightLogs: WeightLog[];
+  activityLogs: ActivityLog[];
+  workoutLogs: WorkoutLog[];
   selectedDate: string;
   actionError: string | null;
   onSwitchToGroup: (code: string) => Promise<void>;
@@ -20,6 +36,8 @@ interface PartnerCompareViewProps {
 type CompareChartMode =
   | 'proteinPct'
   | 'caloriePct'
+  | 'steps'
+  | 'activeCalories'
   | 'weightKg'
   | 'muscleMassKg'
   | 'bodyFatPct'
@@ -33,6 +51,9 @@ export const PartnerCompareView: React.FC<PartnerCompareViewProps> = ({
   otherMembers,
   foodLogs,
   bodyLogs,
+  weightLogs,
+  activityLogs,
+  workoutLogs,
   selectedDate,
   actionError,
   onSwitchToGroup,
@@ -108,6 +129,20 @@ export const PartnerCompareView: React.FC<PartnerCompareViewProps> = ({
       }).length;
 
       const memberBodies = bodyLogs.filter((b) => b.uid === member.uid);
+      const memberWeights = weightLogs.filter((w) => w.uid === member.uid);
+      const dayActivity =
+        activityLogs.find((a) => a.uid === member.uid && a.date === selectedDate) ?? null;
+      const daySteps = dayActivity?.steps ?? 0;
+      const stepsTarget = member.stepsTarget ?? BLUEPRINT_LIMITS.STEPS_TARGET_DEFAULT;
+      const workouts7d = workoutLogs.filter(
+        (w) => w.uid === member.uid && last7Dates.includes(w.date)
+      ).length;
+      const weightTimeline = buildCombinedWeightTimeline(
+        memberWeights,
+        memberBodies,
+        member.heightCm
+      );
+      const latestWeightEntry = weightTimeline[0] ?? null;
       const latestBody = memberBodies[0] ?? null;
       const firstBody = memberBodies[memberBodies.length - 1] ?? null;
 
@@ -123,6 +158,10 @@ export const PartnerCompareView: React.FC<PartnerCompareViewProps> = ({
           (dayTotals.proteinG / Math.max(1, member.proteinTargetG)) * 100
         ),
         proteinHits7d,
+        daySteps,
+        stepsTarget,
+        workouts7d,
+        latestWeightEntry,
         latestBody,
         bmiDelta:
           latestBody && firstBody
@@ -138,7 +177,16 @@ export const PartnerCompareView: React.FC<PartnerCompareViewProps> = ({
             : null,
       };
     });
-  }, [orderedMembers, foodLogs, bodyLogs, selectedDate, myProfile.uid]);
+  }, [
+    orderedMembers,
+    foodLogs,
+    bodyLogs,
+    weightLogs,
+    activityLogs,
+    workoutLogs,
+    selectedDate,
+    myProfile.uid,
+  ]);
 
   const toggleMemberVisibility = (uid: string) => {
     setHiddenMemberUids((prev) =>
@@ -200,6 +248,8 @@ export const PartnerCompareView: React.FC<PartnerCompareViewProps> = ({
       Exclude<CompareChartMode, 'proteinPct' | 'caloriePct'>,
       { unit: string; title: string }
     > = {
+      steps: { unit: 'steps', title: 'Daily Steps Comparison (14d)' },
+      activeCalories: { unit: 'kcal', title: 'Active Calories Burned Comparison (14d)' },
       weightKg: { unit: 'kg', title: 'Weight Comparison (kg)' },
       muscleMassKg: { unit: 'kg', title: 'Skeletal Muscle Mass Comparison (kg)' },
       bodyFatPct: { unit: '%', title: 'Body Fat % Comparison' },
@@ -208,19 +258,64 @@ export const PartnerCompareView: React.FC<PartnerCompareViewProps> = ({
     };
 
     const meta = unitMap[chartMode];
-    const series: ChartSeries[] = visibleMembers.map((member) => ({
-      id: member.uid,
-      name: member.uid === myProfile.uid ? `${member.displayName} (You)` : member.displayName,
-      color: memberColorMap.get(member.uid) || SERIES_COLORS[0],
-      data: [...bodyLogs]
-        .filter((b) => b.uid === member.uid)
-        .sort((a, b) => a.date.localeCompare(b.date))
-        .map((b) => ({
-          date: b.date,
-          label: b.date,
-          value: b[chartMode],
-        })),
-    }));
+    const series: ChartSeries[] = visibleMembers.map((member) => {
+      if (chartMode === 'steps' || chartMode === 'activeCalories') {
+        const last14Set = new Set(last14);
+        return {
+          id: member.uid,
+          name: member.uid === myProfile.uid ? `${member.displayName} (You)` : member.displayName,
+          color: memberColorMap.get(member.uid) || SERIES_COLORS[0],
+          data: activityLogs
+            .filter((a) => a.uid === member.uid && last14Set.has(a.date))
+            .sort((a, b) => a.date.localeCompare(b.date))
+            .map((a) => ({
+              date: a.date,
+              label: a.date,
+              value: chartMode === 'steps' ? a.steps : a.activeCalories,
+            })),
+        };
+      }
+
+      if (chartMode === 'weightKg' || chartMode === 'bmi') {
+        const combined = buildCombinedWeightTimeline(
+          weightLogs.filter((w) => w.uid === member.uid),
+          bodyLogs.filter((b) => b.uid === member.uid),
+          member.heightCm
+        );
+        const byDate = new Map<string, (typeof combined)[number]>();
+        for (const item of combined) {
+          if (!byDate.has(item.date)) {
+            byDate.set(item.date, item);
+          }
+        }
+        return {
+          id: member.uid,
+          name: member.uid === myProfile.uid ? `${member.displayName} (You)` : member.displayName,
+          color: memberColorMap.get(member.uid) || SERIES_COLORS[0],
+          data: Array.from(byDate.values())
+            .sort((a, b) => a.date.localeCompare(b.date))
+            .map((item) => ({
+              date: item.date,
+              label: item.date,
+              value: chartMode === 'weightKg' ? item.weightKg : item.bmi,
+            })),
+        };
+      }
+
+      return {
+        id: member.uid,
+        name: member.uid === myProfile.uid ? `${member.displayName} (You)` : member.displayName,
+        color: memberColorMap.get(member.uid) || SERIES_COLORS[0],
+        data: [...bodyLogs]
+          .filter((b) => b.uid === member.uid)
+          .sort((a, b) => a.date.localeCompare(b.date))
+          .map((b) => ({
+            date: b.date,
+            label: b.date,
+            value: b[chartMode],
+          })),
+      };
+    });
 
     return {
       series,
@@ -234,6 +329,8 @@ export const PartnerCompareView: React.FC<PartnerCompareViewProps> = ({
     chartMode,
     foodLogs,
     bodyLogs,
+    weightLogs,
+    activityLogs,
     myProfile.uid,
     memberColorMap,
   ]);
@@ -451,11 +548,11 @@ export const PartnerCompareView: React.FC<PartnerCompareViewProps> = ({
               />
             </div>
 
-            <div className="pt-2 border-t border-slate-100 grid grid-cols-3 gap-2 text-xs font-mono tabular-nums">
+            <div className="pt-2 border-t border-slate-100 grid grid-cols-4 gap-2 text-xs font-mono tabular-nums">
               <div>
-                <div className="text-slate-500 font-sans">BMI</div>
+                <div className="text-slate-500 font-sans">Weight</div>
                 <div className="font-semibold text-slate-900">
-                  {stat.latestBody ? stat.latestBody.bmi.toFixed(1) : '—'}
+                  {stat.latestWeightEntry ? `${stat.latestWeightEntry.weightKg.toFixed(1)} kg` : '—'}
                 </div>
               </div>
               <div>
@@ -465,9 +562,15 @@ export const PartnerCompareView: React.FC<PartnerCompareViewProps> = ({
                 </div>
               </div>
               <div>
-                <div className="text-slate-500 font-sans">Muscle</div>
+                <div className="text-slate-500 font-sans">Steps</div>
                 <div className="font-semibold text-slate-900">
-                  {stat.latestBody ? `${stat.latestBody.muscleMassKg.toFixed(1)} kg` : '—'}
+                  {stat.daySteps > 0 ? stat.daySteps.toLocaleString() : '—'}
+                </div>
+              </div>
+              <div>
+                <div className="text-slate-500 font-sans">7d Wrkts</div>
+                <div className="font-semibold text-slate-900">
+                  {stat.workouts7d}
                 </div>
               </div>
             </div>
@@ -546,7 +649,7 @@ export const PartnerCompareView: React.FC<PartnerCompareViewProps> = ({
                       : '—'}
                   </td>
                   <td className="py-2.5 px-4 text-right text-slate-600">
-                    {stat.latestBody ? `${stat.latestBody.weightKg.toFixed(1)} kg` : '—'}
+                    {stat.latestWeightEntry ? `${stat.latestWeightEntry.weightKg.toFixed(1)} kg` : '—'}
                   </td>
                   <td className="py-2.5 px-4 text-right text-slate-900">
                     {stat.latestBody ? stat.latestBody.smi.toFixed(1) : '—'}
@@ -569,10 +672,12 @@ export const PartnerCompareView: React.FC<PartnerCompareViewProps> = ({
               [
                 { id: 'proteinPct', label: 'Protein % (14d)' },
                 { id: 'caloriePct', label: 'Calories % (14d)' },
+                { id: 'steps', label: 'Steps (14d)' },
+                { id: 'activeCalories', label: 'Active kcal (14d)' },
+                { id: 'weightKg', label: 'Weight (kg)' },
                 { id: 'bmi', label: 'BMI' },
                 { id: 'bodyFatPct', label: 'Body Fat %' },
                 { id: 'muscleMassKg', label: 'Muscle (kg)' },
-                { id: 'weightKg', label: 'Est. Weight (kg)' },
                 { id: 'ffmi', label: 'FFMI' },
               ] as const
             ).map((tab) => (

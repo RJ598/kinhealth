@@ -1,13 +1,14 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { RotateCcw, Sparkles } from 'lucide-react';
-import type { BodyLog, MemberProfile } from '../types';
-import { computeBodyIndexesFromBmi } from '../types';
+import type { BodyLog, MemberProfile, WeightLog } from '../types';
+import { buildCombinedWeightTimeline, computeBodyIndexesFromBmi } from '../types';
 
 interface BuddyCharacterProps {
   profile: MemberProfile;
   latestBody: BodyLog | null;
   previousBody: BodyLog | null;
+  latestWeightLog?: WeightLog | null;
   caloriesToday: number;
   proteinToday: number;
   justUpdatedTick?: number;
@@ -42,6 +43,7 @@ export const BuddyCharacter: React.FC<BuddyCharacterProps> = ({
   profile,
   latestBody,
   previousBody,
+  latestWeightLog = null,
   caloriesToday,
   proteinToday,
   justUpdatedTick = 0,
@@ -136,6 +138,21 @@ export const BuddyCharacter: React.FC<BuddyCharacterProps> = ({
     );
   }, [activeBody, profile.heightCm]);
 
+  const latestWeightPoint = useMemo(() => {
+    if (showingPrev && previousBody) {
+      return {
+        weightKg: previousBody.weightKg,
+        bmi: previousBody.bmi,
+      };
+    }
+    const timeline = buildCombinedWeightTimeline(
+      latestWeightLog ? [latestWeightLog] : [],
+      latestBody ? [latestBody] : [],
+      profile.heightCm
+    );
+    return timeline[0] ?? null;
+  }, [showingPrev, previousBody, latestWeightLog, latestBody, profile.heightCm]);
+
   const deltas = useMemo(() => {
     if (!latestBody || !previousBody) return null;
     return {
@@ -146,7 +163,7 @@ export const BuddyCharacter: React.FC<BuddyCharacterProps> = ({
   }, [latestBody, previousBody]);
 
   // Morph parameters derived from BMI, Body Fat %, and Muscle Mass
-  const bmi = activeIndexes?.bmi ?? 22.0;
+  const bmi = latestWeightPoint?.bmi ?? activeIndexes?.bmi ?? 22.0;
   const smi = activeIndexes?.smi ?? 8.0;
   const ffmi = activeIndexes?.ffmi ?? 18.5;
   const bodyFat = activeBody?.bodyFatPct ?? 20;
@@ -751,21 +768,18 @@ export const BuddyCharacter: React.FC<BuddyCharacterProps> = ({
           ))}
         </div>
 
-        {/* Live Tracked Metrics Readout (BMI · Body Fat % · Muscle Mass) */}
-        {activeBody && activeIndexes ? (
+        {/* Live Tracked Metrics Readout (Weight · BMI · Weekly Fat % & Muscle Mass) */}
+        {activeBody || latestWeightPoint ? (
           <div className="mt-2.5 text-center px-3">
             <div className="text-xs font-mono tabular-nums text-slate-800 font-medium">
-              BMI {activeIndexes.bmi.toFixed(1)} · Fat {activeBody.bodyFatPct.toFixed(1)}% ·
-              Muscle {activeBody.muscleMassKg.toFixed(1)} kg
+              {latestWeightPoint ? `${latestWeightPoint.weightKg.toFixed(1)} kg · BMI ${bmi.toFixed(1)}` : ''}
+              {activeBody
+                ? `${latestWeightPoint ? ' · ' : ''}Fat ${activeBody.bodyFatPct.toFixed(1)}% · Muscle ${activeBody.muscleMassKg.toFixed(1)} kg`
+                : ''}
             </div>
             {deltas && !showingPrev && (
               <div className="mt-1 text-[11px] font-mono tabular-nums text-slate-500">
-                Change:{' '}
-                <span className={deltas.bmi <= 0 ? 'text-emerald-700' : 'text-slate-700'}>
-                  {deltas.bmi >= 0 ? '+' : ''}
-                  {deltas.bmi} BMI
-                </span>
-                {' · '}
+                Weekly scan Δ:{' '}
                 <span className={deltas.fat <= 0 ? 'text-emerald-700' : 'text-amber-700'}>
                   {deltas.fat >= 0 ? '+' : ''}
                   {deltas.fat}% fat
@@ -780,7 +794,7 @@ export const BuddyCharacter: React.FC<BuddyCharacterProps> = ({
           </div>
         ) : (
           <div className="mt-2 text-xs text-slate-500 px-4 text-center">
-            Log BMI, body fat %, and muscle mass to morph your KinBuddy
+            Log body weight or weekly fat % &amp; muscle mass to morph your KinBuddy
           </div>
         )}
       </div>

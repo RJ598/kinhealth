@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { ArrowRight, Check, Copy } from 'lucide-react';
 import type { SetupMemberInput } from '../hooks/useHouseholdData';
 import type { Household, MemberProfile } from '../types';
+import { BLUEPRINT_LIMITS } from '../types';
 
 interface TargetsSettingsViewProps {
   household: Household;
@@ -38,6 +39,9 @@ export const TargetsSettingsView: React.FC<TargetsSettingsViewProps> = ({
   const [targetMuscleMassKg, setTargetMuscleMassKg] = useState(
     myProfile.targetMuscleMassKg
   );
+  const [stepsTarget, setStepsTarget] = useState(
+    myProfile.stepsTarget ?? BLUEPRINT_LIMITS.STEPS_TARGET_DEFAULT
+  );
   const [saving, setSaving] = useState(false);
   const [savedNotice, setSavedNotice] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -67,6 +71,7 @@ export const TargetsSettingsView: React.FC<TargetsSettingsViewProps> = ({
           heightCm,
           targetWeightKg,
           targetMuscleMassKg,
+          stepsTarget,
         },
         isOwner ? householdName : undefined
       );
@@ -280,6 +285,22 @@ export const TargetsSettingsView: React.FC<TargetsSettingsViewProps> = ({
                 className="w-full px-3 py-2 text-sm font-mono tabular-nums border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-600/20 focus:border-emerald-600"
               />
             </div>
+          </div>
+
+          <div className="max-w-xs">
+            <label className="block text-xs font-medium text-slate-600 mb-1">
+              Daily Steps Goal (steps/day)
+            </label>
+            <input
+              type="number"
+              required
+              min={1000}
+              max={50000}
+              step={500}
+              value={stepsTarget}
+              onChange={(e) => setStepsTarget(Number(e.target.value))}
+              className="w-full px-3 py-2 text-sm font-mono tabular-nums border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-600/20 focus:border-emerald-600"
+            />
           </div>
         </div>
 

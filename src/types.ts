@@ -2,8 +2,18 @@ import type { Timestamp } from 'firebase/firestore';
 
 export type MealType = 'breakfast' | 'lunch' | 'dinner' | 'snack';
 export type FoodSource = 'ai_photo' | 'manual' | 'preset';
+export type HealthSource = 'manual' | 'apple_health' | 'apple_shortcut';
+export type WorkoutType =
+  | 'strength'
+  | 'running'
+  | 'walking'
+  | 'cycling'
+  | 'hiit'
+  | 'yoga'
+  | 'swimming'
+  | 'other';
 export type AiConfidence = '' | 'high' | 'medium' | 'low';
-export type ActiveTab = 'overview' | 'food' | 'body' | 'compare' | 'targets';
+export type ActiveTab = 'overview' | 'food' | 'activity' | 'body' | 'compare' | 'targets';
 
 export const BLUEPRINT_LIMITS = {
   DISPLAY_NAME_MAX: 60,
@@ -25,6 +35,19 @@ export const BLUEPRINT_LIMITS = {
   MUSCLE_MAX: 200,
   BODY_FAT_MIN: 2,
   BODY_FAT_MAX: 75,
+  WATER_LABEL_MAX: 60,
+  WATER_ML_MIN: 10,
+  WATER_ML_MAX: 5000,
+  STEPS_TARGET_MIN: 1000,
+  STEPS_TARGET_MAX: 50000,
+  STEPS_TARGET_DEFAULT: 10000,
+  STEPS_MAX: 200000,
+  ACTIVE_CAL_MAX: 15000,
+  DISTANCE_KM_MAX: 500,
+  WORKOUT_TITLE_MAX: 120,
+  WORKOUT_DURATION_MIN: 1,
+  WORKOUT_DURATION_MAX: 1440,
+  WORKOUT_CAL_MAX: 10000,
 } as const;
 
 export interface UserProfile {
@@ -57,6 +80,7 @@ export interface MemberProfile {
   heightCm: number;
   targetWeightKg: number;
   targetMuscleMassKg: number;
+  stepsTarget?: number;
   sharedUids: string[];
   updatedAt?: Timestamp;
 }
@@ -118,6 +142,76 @@ export interface BodyLog {
   updatedAt?: Timestamp;
 }
 
+export interface WaterLog {
+  id: string;
+  uid: string;
+  authorName: string;
+  date: string;
+  amountMl: number;
+  label: string;
+  sharedUids: string[];
+  createdAt?: Timestamp;
+  updatedAt?: Timestamp;
+}
+
+export interface WeightLog {
+  id: string;
+  uid: string;
+  authorName: string;
+  date: string;
+  weightKg: number;
+  bmi: number;
+  notes: string;
+  sharedUids: string[];
+  createdAt?: Timestamp;
+  updatedAt?: Timestamp;
+}
+
+export interface ActivityLog {
+  id: string;
+  uid: string;
+  authorName: string;
+  date: string;
+  steps: number;
+  activeCalories: number;
+  distanceKm: number;
+  exerciseMinutes: number;
+  source: HealthSource;
+  notes: string;
+  sharedUids: string[];
+  createdAt?: Timestamp;
+  updatedAt?: Timestamp;
+}
+
+export interface WorkoutLog {
+  id: string;
+  uid: string;
+  authorName: string;
+  date: string;
+  workoutType: WorkoutType;
+  title: string;
+  durationMin: number;
+  caloriesBurned: number;
+  distanceKm: number;
+  avgHeartRate: number;
+  source: HealthSource;
+  notes: string;
+  sharedUids: string[];
+  createdAt?: Timestamp;
+  updatedAt?: Timestamp;
+}
+
+export const WORKOUT_TYPE_LABELS: Record<WorkoutType, string> = {
+  strength: 'Strength Training',
+  running: 'Run',
+  walking: 'Walk',
+  cycling: 'Cycling',
+  hiit: 'HIIT / Conditioning',
+  yoga: 'Yoga / Mobility',
+  swimming: 'Swim',
+  other: 'Workout',
+};
+
 export interface AiFoodItem {
   name: string;
   estimatedPortion: string;
@@ -150,6 +244,26 @@ export interface MealAutocompleteSuggestion {
   carbsG: number;
   fatG: number;
   fiberG: number;
+}
+
+export interface WeeklyInsightDayBreakdown {
+  date: string;
+  calories: number;
+  proteinG: number;
+  carbsG: number;
+  fatG: number;
+  fiberG: number;
+  mealCount: number;
+  topMeals: string[];
+}
+
+export interface WeeklyNutritionInsight {
+  headline: string;
+  proteinAssessment: string;
+  calorieAssessment: string;
+  highlights: string[];
+  actionItems: string[];
+  generatedAt: string;
 }
 
 export interface ComputedBodyIndexes {
@@ -220,6 +334,75 @@ export function computeBodyIndexesFromBmi(
             : 'Obese range',
     weightKg,
   };
+}
+
+export function computeBmiFromWeight(
+  weightKg: number,
+  heightCm: number
+): { weightKg: number; bmi: number; bmiLabel: string } {
+  const safeWeight = clampNum(round1(weightKg), 20, 400);
+  const safeHeightM = clampNum(heightCm, 80, 250) / 100;
+  const h2 = safeHeightM * safeHeightM;
+  const bmi = clampNum(round1(safeWeight / h2), 5, 100);
+  let bmiLabel = 'Normal range';
+  if (bmi < 18.5) bmiLabel = 'Underweight';
+  else if (bmi >= 25 && bmi < 30) bmiLabel = 'Overweight';
+  else if (bmi >= 30) bmiLabel = 'Obese range';
+  return { weightKg: safeWeight, bmi, bmiLabel };
+}
+
+export interface CombinedWeightEntry {
+  id: string;
+  date: string;
+  weightKg: number;
+  bmi: number;
+  source: 'weight' | 'composition';
+  notes: string;
+  createdAtMs: number;
+}
+
+export function buildCombinedWeightTimeline(
+  weightLogs: WeightLog[],
+  bodyLogs: BodyLog[],
+  heightCm: number
+): CombinedWeightEntry[] {
+  const entries: CombinedWeightEntry[] = [
+    ...weightLogs.map((w) => ({
+      id: w.id,
+      date: w.date,
+      weightKg: round1(w.weightKg),
+      bmi: computeBmiFromWeight(w.weightKg, heightCm).bmi,
+      source: 'weight' as const,
+      notes: w.notes,
+      createdAtMs: w.createdAt?.toMillis?.() ?? 0,
+    })),
+    ...bodyLogs.map((b) => ({
+      id: b.id,
+      date: b.date,
+      weightKg: round1(b.weightKg),
+      bmi: b.bmi,
+      source: 'composition' as const,
+      notes: b.notes,
+      createdAtMs: b.createdAt?.toMillis?.() ?? 0,
+    })),
+  ];
+
+  // Newest first; prefer weight log if same date & timestamp tie
+  entries.sort((a, b) => {
+    if (a.date !== b.date) return b.date.localeCompare(a.date);
+    if (b.createdAtMs !== a.createdAtMs) return b.createdAtMs - a.createdAtMs;
+    if (a.source !== b.source) return a.source === 'weight' ? -1 : 1;
+    return 0;
+  });
+  return entries;
+}
+
+export function daysBetweenDates(earlierDateStr: string, laterDateStr: string): number {
+  const parseUtc = (ds: string) => {
+    const [y, m, d] = ds.split('-').map(Number);
+    return Date.UTC(y, (m || 1) - 1, d || 1);
+  };
+  return Math.round((parseUtc(laterDateStr) - parseUtc(earlierDateStr)) / 86400000);
 }
 
 export function getLocalDateStr(date: Date = new Date()): string {

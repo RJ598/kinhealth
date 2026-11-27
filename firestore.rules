@@ -156,7 +156,7 @@ service cloud.firestore {
         && data.keys().hasOnly([
           'uid', 'displayName', 'roleLabel', 'calorieTarget', 'proteinTargetG',
           'carbsTargetG', 'fatTargetG', 'heightCm', 'targetWeightKg',
-          'targetMuscleMassKg', 'sharedUids', 'updatedAt'
+          'targetMuscleMassKg', 'stepsTarget', 'sharedUids', 'updatedAt'
         ])
         && data.uid is string && data.uid == memberId && isValidId(data.uid)
         && data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 60
@@ -168,6 +168,7 @@ service cloud.firestore {
         && data.heightCm is number && data.heightCm >= 80 && data.heightCm <= 250
         && data.targetWeightKg is number && data.targetWeightKg >= 25 && data.targetWeightKg <= 350
         && data.targetMuscleMassKg is number && data.targetMuscleMassKg >= 10 && data.targetMuscleMassKg <= 150
+        && (!('stepsTarget' in data) || (data.stepsTarget is number && data.stepsTarget >= 1000 && data.stepsTarget <= 50000))
         && isValidSharedUids(data.sharedUids, data.uid)
         && data.updatedAt is timestamp;
     }
@@ -226,6 +227,101 @@ service cloud.firestore {
         && data.bmi is number && data.bmi >= 5 && data.bmi <= 100
         && data.smi is number && data.smi >= 0 && data.smi <= 50
         && data.ffmi is number && data.ffmi >= 0 && data.ffmi <= 50
+        && data.notes is string && data.notes.size() <= 240
+        && isValidSharedUids(data.sharedUids, data.uid)
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidWeightLog(data, logId) {
+      return data.keys().hasAll([
+          'id', 'uid', 'authorName', 'date', 'weightKg', 'bmi',
+          'notes', 'sharedUids', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'id', 'uid', 'authorName', 'date', 'weightKg', 'bmi',
+          'notes', 'sharedUids', 'createdAt', 'updatedAt'
+        ])
+        && data.id is string && data.id == logId && isValidId(data.id)
+        && data.uid is string && isValidId(data.uid)
+        && data.authorName is string && data.authorName.size() >= 1 && data.authorName.size() <= 60
+        && isValidDateStr(data.date)
+        && data.weightKg is number && data.weightKg >= 20 && data.weightKg <= 400
+        && data.bmi is number && data.bmi >= 5 && data.bmi <= 100
+        && data.notes is string && data.notes.size() <= 240
+        && isValidSharedUids(data.sharedUids, data.uid)
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidWaterLog(data, logId) {
+      return data.keys().hasAll([
+          'id', 'uid', 'authorName', 'date', 'amountMl', 'label',
+          'sharedUids', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'id', 'uid', 'authorName', 'date', 'amountMl', 'label',
+          'sharedUids', 'createdAt', 'updatedAt'
+        ])
+        && data.id is string && data.id == logId && isValidId(data.id)
+        && data.uid is string && isValidId(data.uid)
+        && data.authorName is string && data.authorName.size() >= 1 && data.authorName.size() <= 60
+        && isValidDateStr(data.date)
+        && data.amountMl is number && data.amountMl >= 10 && data.amountMl <= 5000
+        && data.label is string && data.label.size() <= 60
+        && isValidSharedUids(data.sharedUids, data.uid)
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidActivityLog(data, logId) {
+      return data.keys().hasAll([
+          'id', 'uid', 'authorName', 'date', 'steps', 'activeCalories',
+          'distanceKm', 'exerciseMinutes', 'source', 'notes',
+          'sharedUids', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'id', 'uid', 'authorName', 'date', 'steps', 'activeCalories',
+          'distanceKm', 'exerciseMinutes', 'source', 'notes',
+          'sharedUids', 'createdAt', 'updatedAt'
+        ])
+        && data.id is string && data.id == logId && isValidId(data.id)
+        && data.uid is string && isValidId(data.uid)
+        && data.authorName is string && data.authorName.size() >= 1 && data.authorName.size() <= 60
+        && isValidDateStr(data.date)
+        && data.steps is number && data.steps >= 0 && data.steps <= 200000
+        && data.activeCalories is number && data.activeCalories >= 0 && data.activeCalories <= 15000
+        && data.distanceKm is number && data.distanceKm >= 0 && data.distanceKm <= 500
+        && data.exerciseMinutes is number && data.exerciseMinutes >= 0 && data.exerciseMinutes <= 1440
+        && data.source in ['manual', 'apple_health', 'apple_shortcut']
+        && data.notes is string && data.notes.size() <= 240
+        && isValidSharedUids(data.sharedUids, data.uid)
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidWorkoutLog(data, logId) {
+      return data.keys().hasAll([
+          'id', 'uid', 'authorName', 'date', 'workoutType', 'title',
+          'durationMin', 'caloriesBurned', 'distanceKm', 'avgHeartRate',
+          'source', 'notes', 'sharedUids', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'id', 'uid', 'authorName', 'date', 'workoutType', 'title',
+          'durationMin', 'caloriesBurned', 'distanceKm', 'avgHeartRate',
+          'source', 'notes', 'sharedUids', 'createdAt', 'updatedAt'
+        ])
+        && data.id is string && data.id == logId && isValidId(data.id)
+        && data.uid is string && isValidId(data.uid)
+        && data.authorName is string && data.authorName.size() >= 1 && data.authorName.size() <= 60
+        && isValidDateStr(data.date)
+        && data.workoutType in ['strength', 'running', 'walking', 'cycling', 'hiit', 'yoga', 'swimming', 'other']
+        && data.title is string && data.title.size() >= 1 && data.title.size() <= 120
+        && data.durationMin is number && data.durationMin >= 1 && data.durationMin <= 1440
+        && data.caloriesBurned is number && data.caloriesBurned >= 0 && data.caloriesBurned <= 10000
+        && data.distanceKm is number && data.distanceKm >= 0 && data.distanceKm <= 500
+        && data.avgHeartRate is number && data.avgHeartRate >= 0 && data.avgHeartRate <= 260
+        && data.source in ['manual', 'apple_health', 'apple_shortcut']
         && data.notes is string && data.notes.size() <= 240
         && isValidSharedUids(data.sharedUids, data.uid)
         && data.createdAt is timestamp
@@ -365,7 +461,7 @@ service cloud.firestore {
         allow get: if isSignedIn()
           && isValidId(householdId)
           && isValidId(memberId)
-          && (request.auth.uid in resource.data.sharedUids || isHouseholdMember(householdId));
+          && ((resource != null && request.auth.uid in resource.data.sharedUids) || isHouseholdMember(householdId));
         allow list: if isSignedIn()
           && request.auth.uid in resource.data.sharedUids;
         allow create: if isSignedIn()
@@ -390,7 +486,7 @@ service cloud.firestore {
             incoming().diff(existing()).affectedKeys().hasOnly([
               'displayName', 'roleLabel', 'calorieTarget', 'proteinTargetG',
               'carbsTargetG', 'fatTargetG', 'heightCm', 'targetWeightKg',
-              'targetMuscleMassKg', 'sharedUids', 'updatedAt'
+              'targetMuscleMassKg', 'stepsTarget', 'sharedUids', 'updatedAt'
             ])
           );
         allow delete: if false;
@@ -401,7 +497,7 @@ service cloud.firestore {
         allow get: if isSignedIn()
           && isValidId(householdId)
           && isValidId(logId)
-          && (request.auth.uid in resource.data.sharedUids || isHouseholdMember(householdId));
+          && ((resource != null && request.auth.uid in resource.data.sharedUids) || isHouseholdMember(householdId));
         allow list: if isSignedIn()
           && request.auth.uid in resource.data.sharedUids;
         allow create: if isSignedIn()
@@ -444,7 +540,7 @@ service cloud.firestore {
         allow get: if isSignedIn()
           && isValidId(householdId)
           && isValidId(presetId)
-          && (request.auth.uid in resource.data.sharedUids || isHouseholdMember(householdId));
+          && ((resource != null && request.auth.uid in resource.data.sharedUids) || isHouseholdMember(householdId));
         allow list: if isSignedIn()
           && request.auth.uid in resource.data.sharedUids;
         allow create: if isSignedIn()
@@ -487,7 +583,7 @@ service cloud.firestore {
         allow get: if isSignedIn()
           && isValidId(householdId)
           && isValidId(logId)
-          && (request.auth.uid in resource.data.sharedUids || isHouseholdMember(householdId));
+          && ((resource != null && request.auth.uid in resource.data.sharedUids) || isHouseholdMember(householdId));
         allow list: if isSignedIn()
           && request.auth.uid in resource.data.sharedUids;
         allow create: if isSignedIn()
@@ -515,6 +611,173 @@ service cloud.firestore {
             incoming().diff(existing()).affectedKeys().hasOnly([
               'authorName', 'date', 'weightKg', 'muscleMassKg', 'bodyFatPct',
               'visceralFatIndex', 'waistCm', 'bmi', 'smi', 'ffmi',
+              'notes', 'sharedUids', 'updatedAt'
+            ])
+          );
+        allow delete: if isSignedIn()
+          && isValidId(householdId)
+          && isValidId(logId)
+          && existing().uid == request.auth.uid
+          && isHouseholdMember(householdId);
+      }
+
+      // 3e. Daily Weight Logs
+      match /weightLogs/{logId} {
+        allow get: if isSignedIn()
+          && isValidId(householdId)
+          && isValidId(logId)
+          && ((resource != null && request.auth.uid in resource.data.sharedUids) || isHouseholdMember(householdId));
+        allow list: if isSignedIn()
+          && request.auth.uid in resource.data.sharedUids;
+        allow create: if isSignedIn()
+          && isValidId(householdId)
+          && isValidId(logId)
+          && isValidWeightLog(incoming(), logId)
+          && incoming().uid == request.auth.uid
+          && incoming().createdAt == request.time
+          && incoming().updatedAt == request.time
+          && isHouseholdMember(householdId)
+          && allSharedUidsInHousehold(incoming().sharedUids, householdId);
+        allow update: if isSignedIn()
+          && isValidId(householdId)
+          && isValidId(logId)
+          && isValidWeightLog(incoming(), logId)
+          && existing().uid == request.auth.uid
+          && incoming().uid == existing().uid
+          && incoming().id == existing().id
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedAt == request.time
+          && isHouseholdMember(householdId)
+          && allSharedUidsInHousehold(incoming().sharedUids, householdId)
+          && (
+            // Action: Edit weight log or sync sharedUids
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'authorName', 'date', 'weightKg', 'bmi', 'notes', 'sharedUids', 'updatedAt'
+            ])
+          );
+        allow delete: if isSignedIn()
+          && isValidId(householdId)
+          && isValidId(logId)
+          && existing().uid == request.auth.uid
+          && isHouseholdMember(householdId);
+      }
+
+      // 3f. Daily Water Intake Logs
+      match /waterLogs/{logId} {
+        allow get: if isSignedIn()
+          && isValidId(householdId)
+          && isValidId(logId)
+          && ((resource != null && request.auth.uid in resource.data.sharedUids) || isHouseholdMember(householdId));
+        allow list: if isSignedIn()
+          && request.auth.uid in resource.data.sharedUids;
+        allow create: if isSignedIn()
+          && isValidId(householdId)
+          && isValidId(logId)
+          && isValidWaterLog(incoming(), logId)
+          && incoming().uid == request.auth.uid
+          && incoming().createdAt == request.time
+          && incoming().updatedAt == request.time
+          && isHouseholdMember(householdId)
+          && allSharedUidsInHousehold(incoming().sharedUids, householdId);
+        allow update: if isSignedIn()
+          && isValidId(householdId)
+          && isValidId(logId)
+          && isValidWaterLog(incoming(), logId)
+          && existing().uid == request.auth.uid
+          && incoming().uid == existing().uid
+          && incoming().id == existing().id
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedAt == request.time
+          && isHouseholdMember(householdId)
+          && allSharedUidsInHousehold(incoming().sharedUids, householdId)
+          && (
+            // Action: Edit water log or sync sharedUids
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'authorName', 'date', 'amountMl', 'label', 'sharedUids', 'updatedAt'
+            ])
+          );
+        allow delete: if isSignedIn()
+          && isValidId(householdId)
+          && isValidId(logId)
+          && existing().uid == request.auth.uid
+          && isHouseholdMember(householdId);
+      }
+
+      // 3g. Daily Activity & Steps Logs
+      match /activityLogs/{logId} {
+        allow get: if isSignedIn()
+          && isValidId(householdId)
+          && isValidId(logId)
+          && ((resource != null && request.auth.uid in resource.data.sharedUids) || isHouseholdMember(householdId));
+        allow list: if isSignedIn()
+          && request.auth.uid in resource.data.sharedUids;
+        allow create: if isSignedIn()
+          && isValidId(householdId)
+          && isValidId(logId)
+          && isValidActivityLog(incoming(), logId)
+          && incoming().uid == request.auth.uid
+          && incoming().createdAt == request.time
+          && incoming().updatedAt == request.time
+          && isHouseholdMember(householdId)
+          && allSharedUidsInHousehold(incoming().sharedUids, householdId);
+        allow update: if isSignedIn()
+          && isValidId(householdId)
+          && isValidId(logId)
+          && isValidActivityLog(incoming(), logId)
+          && existing().uid == request.auth.uid
+          && incoming().uid == existing().uid
+          && incoming().id == existing().id
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedAt == request.time
+          && isHouseholdMember(householdId)
+          && allSharedUidsInHousehold(incoming().sharedUids, householdId)
+          && (
+            // Action: Edit activity log or sync sharedUids
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'authorName', 'date', 'steps', 'activeCalories', 'distanceKm',
+              'exerciseMinutes', 'source', 'notes', 'sharedUids', 'updatedAt'
+            ])
+          );
+        allow delete: if isSignedIn()
+          && isValidId(householdId)
+          && isValidId(logId)
+          && existing().uid == request.auth.uid
+          && isHouseholdMember(householdId);
+      }
+
+      // 3h. Workout Session Logs
+      match /workoutLogs/{logId} {
+        allow get: if isSignedIn()
+          && isValidId(householdId)
+          && isValidId(logId)
+          && ((resource != null && request.auth.uid in resource.data.sharedUids) || isHouseholdMember(householdId));
+        allow list: if isSignedIn()
+          && request.auth.uid in resource.data.sharedUids;
+        allow create: if isSignedIn()
+          && isValidId(householdId)
+          && isValidId(logId)
+          && isValidWorkoutLog(incoming(), logId)
+          && incoming().uid == request.auth.uid
+          && incoming().createdAt == request.time
+          && incoming().updatedAt == request.time
+          && isHouseholdMember(householdId)
+          && allSharedUidsInHousehold(incoming().sharedUids, householdId);
+        allow update: if isSignedIn()
+          && isValidId(householdId)
+          && isValidId(logId)
+          && isValidWorkoutLog(incoming(), logId)
+          && existing().uid == request.auth.uid
+          && incoming().uid == existing().uid
+          && incoming().id == existing().id
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedAt == request.time
+          && isHouseholdMember(householdId)
+          && allSharedUidsInHousehold(incoming().sharedUids, householdId)
+          && (
+            // Action: Edit workout log or sync sharedUids
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'authorName', 'date', 'workoutType', 'title', 'durationMin',
+              'caloriesBurned', 'distanceKm', 'avgHeartRate', 'source',
               'notes', 'sharedUids', 'updatedAt'
             ])
           );

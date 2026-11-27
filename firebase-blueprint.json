@@ -179,6 +179,9 @@
         "targetMuscleMassKg": {
           "type": "number"
         },
+        "stepsTarget": {
+          "type": "number"
+        },
         "sharedUids": {
           "type": "array",
           "description": "Bounded array of 1 to 10 household member UIDs."
@@ -541,6 +544,295 @@
         "createdAt",
         "updatedAt"
       ]
+    },
+    "WaterLog": {
+      "title": "WaterLog",
+      "description": "Individual daily water intake entry measured in milliliters.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "authorName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 60
+        },
+        "date": {
+          "type": "string",
+          "minLength": 10,
+          "maxLength": 10,
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+        },
+        "amountMl": {
+          "type": "number"
+        },
+        "label": {
+          "type": "string",
+          "maxLength": 60
+        },
+        "sharedUids": {
+          "type": "array",
+          "description": "Bounded array of 1 to 10 member UIDs."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "id",
+        "uid",
+        "authorName",
+        "date",
+        "amountMl",
+        "label",
+        "sharedUids",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "WeightLog": {
+      "title": "WeightLog",
+      "description": "Quick daily body weight check-in with weight in kg and derived BMI.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "authorName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 60
+        },
+        "date": {
+          "type": "string",
+          "minLength": 10,
+          "maxLength": 10,
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+        },
+        "weightKg": {
+          "type": "number"
+        },
+        "bmi": {
+          "type": "number"
+        },
+        "notes": {
+          "type": "string",
+          "maxLength": 240
+        },
+        "sharedUids": {
+          "type": "array",
+          "description": "Bounded array of 1 to 10 member UIDs."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "id",
+        "uid",
+        "authorName",
+        "date",
+        "weightKg",
+        "bmi",
+        "notes",
+        "sharedUids",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "ActivityLog": {
+      "title": "ActivityLog",
+      "description": "Daily step count, active calories burned, distance walked/ran, and exercise minutes from manual entry or Apple Health.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "authorName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 60
+        },
+        "date": {
+          "type": "string",
+          "minLength": 10,
+          "maxLength": 10,
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+        },
+        "steps": {
+          "type": "number"
+        },
+        "activeCalories": {
+          "type": "number"
+        },
+        "distanceKm": {
+          "type": "number"
+        },
+        "exerciseMinutes": {
+          "type": "number"
+        },
+        "source": {
+          "type": "string",
+          "enum": ["manual", "apple_health", "apple_shortcut"]
+        },
+        "notes": {
+          "type": "string",
+          "maxLength": 240
+        },
+        "sharedUids": {
+          "type": "array",
+          "description": "Bounded array of 1 to 10 member UIDs."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "id",
+        "uid",
+        "authorName",
+        "date",
+        "steps",
+        "activeCalories",
+        "distanceKm",
+        "exerciseMinutes",
+        "source",
+        "notes",
+        "sharedUids",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "WorkoutLog": {
+      "title": "WorkoutLog",
+      "description": "Individual workout session from manual entry or Apple Health / Apple Watch import.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "authorName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 60
+        },
+        "date": {
+          "type": "string",
+          "minLength": 10,
+          "maxLength": 10,
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+        },
+        "workoutType": {
+          "type": "string",
+          "enum": ["strength", "running", "walking", "cycling", "hiit", "yoga", "swimming", "other"]
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "durationMin": {
+          "type": "number"
+        },
+        "caloriesBurned": {
+          "type": "number"
+        },
+        "distanceKm": {
+          "type": "number"
+        },
+        "avgHeartRate": {
+          "type": "number"
+        },
+        "source": {
+          "type": "string",
+          "enum": ["manual", "apple_health", "apple_shortcut"]
+        },
+        "notes": {
+          "type": "string",
+          "maxLength": 240
+        },
+        "sharedUids": {
+          "type": "array",
+          "description": "Bounded array of 1 to 10 member UIDs."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "id",
+        "uid",
+        "authorName",
+        "date",
+        "workoutType",
+        "title",
+        "durationMin",
+        "caloriesBurned",
+        "distanceKm",
+        "avgHeartRate",
+        "source",
+        "notes",
+        "sharedUids",
+        "createdAt",
+        "updatedAt"
+      ]
     }
   },
   "firestore": {
@@ -574,7 +866,23 @@
     },
     "/households/{householdId}/bodyLogs/{logId}": {
       "schema": { "$ref": "#/entities/BodyLog" },
-      "description": "Weight, muscle mass, and body index logs belonging to members of the workspace."
+      "description": "Weekly body composition check-ins recording fat %, muscle mass, weight, and indexes."
+    },
+    "/households/{householdId}/weightLogs/{logId}": {
+      "schema": { "$ref": "#/entities/WeightLog" },
+      "description": "Quick daily body weight logs belonging to members of the workspace."
+    },
+    "/households/{householdId}/waterLogs/{logId}": {
+      "schema": { "$ref": "#/entities/WaterLog" },
+      "description": "Daily water intake logs belonging to members of the workspace."
+    },
+    "/households/{householdId}/activityLogs/{logId}": {
+      "schema": { "$ref": "#/entities/ActivityLog" },
+      "description": "Daily steps, active calories, distance, and exercise minutes belonging to members of the workspace."
+    },
+    "/households/{householdId}/workoutLogs/{logId}": {
+      "schema": { "$ref": "#/entities/WorkoutLog" },
+      "description": "Workout sessions logged manually or synced from Apple Health / Shortcuts."
     }
   }
 }
